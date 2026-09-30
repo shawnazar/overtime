@@ -7,7 +7,7 @@ branding:
 
 inputs:
   token:
-    description: "Fine-grained PAT: repo Variables read/write, Actions read/write and Checks read (refusal detection/re-runs) on the managed repos, and account Plan: read (or org Administration: read) for billing usage. Store as a secret."
+    description: "Fine-grained PAT: repo Variables read/write and Actions read/write (refusal detection/re-runs) on the managed repos, and account Plan: read (or org Administration: read) for billing usage. Store as a secret."
     required: true
   api-url:
     description: "GitHub API URL (GitHub Enterprise Server). Default: https://api.github.com."
@@ -48,7 +48,7 @@ inputs:
     description: "runs-on once minutes are spent: a label or JSON. Default: [\"self-hosted\"]."
     required: false
   included-minutes:
-    description: "Monthly included minutes of your plan (Free 2000, Pro 3000, Team 3000). Used for the percentage threshold. Default: 2000."
+    description: "Monthly included minutes, or auto to read them from your plan (Free 2000, Pro/Team 3000; needs Plan: Read). Used for the percentage threshold. Default: auto."
     required: false
   switch-at-percent:
     description: "Switch to self-hosted when this share of the included minutes is used. Leave headroom: jobs already queued still bill. Default: 90."
@@ -67,6 +67,9 @@ inputs:
     required: false
   detect-refusals:
     description: "Switch when GitHub refuses to start hosted jobs for billing reasons (spending limit, failed payment). Default: true."
+    required: false
+  refusal-evidence:
+    description: "auto | annotations | heuristic. Fine-grained PATs can't read annotations, so auto falls back to: hosted job failed with no runner and no steps. Default: auto."
     required: false
   refusal-lookback-minutes:
     description: "How far back to look for refused jobs. Default: 120."

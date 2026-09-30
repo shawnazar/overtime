@@ -7379,13 +7379,15 @@ var DEFAULTS = {
   hosted: "ubuntu-latest",
   selfHosted: ["self-hosted"],
   overrides: {},
-  includedMinutes: 2e3,
+  includedMinutes: 0,
+  includedMinutesAuto: true,
   switchAtPercent: 90,
   switchBack: "next-cycle",
   switchBackPercent: 50,
   skus: [],
   switchOnOverage: true,
   detectRefusals: true,
+  refusalEvidence: "auto",
   refusalLookbackMinutes: 120,
   rerunRefused: true,
   mode: "auto",
@@ -7496,13 +7498,21 @@ function buildConfig(raw, context = {}) {
   set("variable", raw["variable"]?.trim() || void 0);
   set("hosted", parseRunsOn("hosted-runs-on", raw["hosted-runs-on"]));
   set("selfHosted", parseRunsOn("self-hosted-runs-on", raw["self-hosted-runs-on"]));
-  set("includedMinutes", num("included-minutes", raw["included-minutes"], 0, 1e7));
+  const im = raw["included-minutes"]?.trim();
+  if (im && /^auto$/i.test(im)) {
+    cfg.includedMinutes = 0;
+    cfg.includedMinutesAuto = true;
+  } else if (im) {
+    set("includedMinutes", num("included-minutes", im, 0, 1e7));
+    cfg.includedMinutesAuto = false;
+  } else if (typeof file.includedMinutes === "number") cfg.includedMinutesAuto = false;
   set("switchAtPercent", num("switch-at-percent", raw["switch-at-percent"], 1, 100));
   set("switchBack", oneOf("switch-back", raw["switch-back"], ["next-cycle", "below-percent"]));
   set("switchBackPercent", num("switch-back-percent", raw["switch-back-percent"], 0, 100));
   if (list(raw["skus"]).length) cfg.skus = list(raw["skus"]);
   set("switchOnOverage", bool("switch-on-overage", raw["switch-on-overage"]));
   set("detectRefusals", bool("detect-refusals", raw["detect-refusals"]));
+  set("refusalEvidence", oneOf("refusal-evidence", raw["refusal-evidence"], ["auto", "annotations", "heuristic"]));
   set("refusalLookbackMinutes", num("refusal-lookback-minutes", raw["refusal-lookback-minutes"], 5, 10080));
   set("rerunRefused", bool("rerun-refused", raw["rerun-refused"]));
   set("mode", oneOf("mode", raw["mode"], ["auto", "hosted", "self-hosted"]));
@@ -7535,13 +7545,13 @@ function validateTypes(cfg) {
   range("switchAtPercent", 1, 100);
   range("switchBackPercent", 0, 100);
   range("refusalLookbackMinutes", 5, 10080);
-  for (const k of ["includeArchived", "includeForks", "switchOnOverage", "detectRefusals", "rerunRefused", "dryRun"]) {
+  for (const k of ["includeArchived", "includeForks", "switchOnOverage", "detectRefusals", "rerunRefused", "dryRun", "includedMinutesAuto"]) {
     if (typeof cfg[k] !== "boolean") throw new ConfigError(`${k}: expected true/false, got ${JSON.stringify(cfg[k])}`);
   }
   for (const k of ["repos", "reposInclude", "reposExclude", "skus"]) {
     if (!Array.isArray(cfg[k]) || !cfg[k].every((x) => typeof x === "string")) throw new ConfigError(`${k}: expected a list of strings`);
   }
-  const enums = [["ownerType", ["auto", "user", "organization"]], ["switchBack", ["next-cycle", "below-percent"]], ["mode", ["auto", "hosted", "self-hosted"]]];
+  const enums = [["refusalEvidence", ["auto", "annotations", "heuristic"]], ["ownerType", ["auto", "user", "organization"]], ["switchBack", ["next-cycle", "below-percent"]], ["mode", ["auto", "hosted", "self-hosted"]]];
   for (const [k, allowed] of enums) if (!allowed.includes(cfg[k])) throw new ConfigError(`${String(k)}: expected one of ${allowed.join(", ")}, got ${JSON.stringify(cfg[k])}`);
   validateRunsOn("hosted", cfg.hosted);
   validateRunsOn("selfHosted", cfg.selfHosted);
@@ -7586,6 +7596,7 @@ var SETTINGS = [
   "skus",
   "switch-on-overage",
   "detect-refusals",
+  "refusal-evidence",
   "refusal-lookback-minutes",
   "rerun-refused",
   "mode",
@@ -7740,20 +7751,37 @@ var BILLING_PATTERNS = [
   /included minutes/i,
   /billing/i
 ];
+var HOSTED_LABEL = /^(ubuntu|windows|macos)-/i;
 function neverStarted(job) {
   return job.conclusion === "failure" && !job.runner_name && (job.steps?.length ?? 0) === 0;
 }
-async function findRefusals(gh, owner, repos, since, maxRunsPerRepo = 20) {
+function wantedHosted(job) {
+  return (job.labels ?? []).some((l) => HOSTED_LABEL.test(l));
+}
+async function findRefusals(gh, owner, repos, since, evidence = "auto", maxRunsPerRepo = 20) {
   const out = [];
   const created = `>=${since.toISOString().replace(/\.\d{3}Z$/, "Z")}`;
+  let annotationsReadable = evidence !== "heuristic";
   for (const repo of repos) {
     const runs = await gh.paginate(`/repos/${owner}/${repo}/actions/runs`, { status: "failure", created }, "workflow_runs", maxRunsPerRepo);
     for (const run2 of runs) {
       const jobs = await gh.paginate(`/repos/${owner}/${repo}/actions/runs/${run2.id}/jobs`, { filter: "latest" }, "jobs", 100);
       for (const job of jobs.filter(neverStarted)) {
-        const anns = await gh.paginate(`/repos/${owner}/${repo}/check-runs/${job.id}/annotations`, {}, void 0, 20).catch(() => []);
-        const hit = anns.find((a) => BILLING_PATTERNS.some((p) => p.test(a.message ?? "")));
-        if (hit) out.push({ repo, runId: run2.id, jobName: job.name, reason: hit.message.slice(0, 200) });
+        if (annotationsReadable) {
+          try {
+            const anns = await gh.paginate(`/repos/${owner}/${repo}/check-runs/${job.id}/annotations`, {}, void 0, 20);
+            const hit = anns.find((a) => BILLING_PATTERNS.some((p) => p.test(a.message ?? "")));
+            if (hit) out.push({ repo, runId: run2.id, jobName: job.name, reason: hit.message.slice(0, 200) });
+            continue;
+          } catch (e) {
+            if (e instanceof GitHubError && e.status === 404) continue;
+            if (!(e instanceof GitHubError && e.status === 403) || evidence === "annotations") throw e;
+            annotationsReadable = false;
+          }
+        }
+        if (wantedHosted(job)) {
+          out.push({ repo, runId: run2.id, jobName: job.name, reason: `hosted job never started (${(job.labels ?? []).join(", ")}): no runner, no steps` });
+        }
       }
     }
   }
@@ -7908,10 +7936,39 @@ var log = {
   }
 };
 
+// src/plan.ts
+var INCLUDED_MINUTES = {
+  free: 2e3,
+  pro: 3e3,
+  team: 3e3,
+  enterprise: 5e4,
+  business: 5e4
+  // GitHub Enterprise Cloud reports the plan as "business" on some accounts
+};
+async function includedMinutesFor(gh, owner, ownerType) {
+  const path = ownerType === "organization" ? `/orgs/${owner}` : `/users/${owner}`;
+  const body = await gh.request("GET", path);
+  const plan = body?.plan?.name?.toLowerCase();
+  if (!plan) {
+    throw new Error(
+      `included-minutes is "auto" but the token can't see ${owner}'s plan. Grant account "Plan: Read" (orgs: "Administration: Read"), or set included-minutes explicitly.`
+    );
+  }
+  const minutes = INCLUDED_MINUTES[plan];
+  if (minutes === void 0) throw new Error(`unknown plan "${plan}"; set included-minutes explicitly`);
+  return { minutes, plan };
+}
+
 // src/run.ts
-async function run(cfg, now = /* @__PURE__ */ new Date(), gh = new GitHubClient({ token: cfg.token, apiUrl: cfg.apiUrl })) {
+async function run(cfgIn, now = /* @__PURE__ */ new Date(), gh = new GitHubClient({ token: cfgIn.token, apiUrl: cfgIn.apiUrl })) {
   const warnings = [];
-  const ownerType = await resolveOwnerType(gh, cfg.owner, cfg.ownerType);
+  const ownerType = await resolveOwnerType(gh, cfgIn.owner, cfgIn.ownerType);
+  let cfg = cfgIn;
+  if (cfgIn.includedMinutesAuto) {
+    const { minutes, plan } = await includedMinutesFor(gh, cfgIn.owner, ownerType);
+    cfg = { ...cfgIn, includedMinutes: minutes };
+    log.info(`plan "${plan}": ${minutes} included minutes/month`);
+  }
   const repos = await log.group("Repositories", async () => {
     const r = await resolveRepos(gh, cfg, ownerType);
     log.info(`${r.length} managed repo(s): ${r.join(", ") || "(none)"}`);
@@ -7925,7 +7982,7 @@ async function run(cfg, now = /* @__PURE__ */ new Date(), gh = new GitHubClient(
   });
   const refusals = cfg.detectRefusals ? await log.group("Refused jobs", async () => {
     const since = new Date(now.getTime() - cfg.refusalLookbackMinutes * 6e4);
-    const r = await findRefusals(gh, cfg.owner, repos, since).catch((e) => {
+    const r = await findRefusals(gh, cfg.owner, repos, since, cfg.refusalEvidence).catch((e) => {
       warnings.push(`refusal check failed: ${e.message}`);
       return [];
     });
@@ -7960,7 +8017,7 @@ async function run(cfg, now = /* @__PURE__ */ new Date(), gh = new GitHubClient(
     warnings.push(...errs);
   }
   for (const w of warnings) log.warn(w);
-  return { decision, usage, refusals, repos: results, reruns, warnings };
+  return { decision, usage, refusals, repos: results, reruns, warnings, includedMinutes: cfg.includedMinutes };
 }
 function dedupe(rs) {
   const seen = /* @__PURE__ */ new Set();
@@ -7972,6 +8029,7 @@ function dedupe(rs) {
   });
 }
 function summaryMarkdown(r, cfg) {
+  const included = r.includedMinutes ?? cfg.includedMinutes;
   const icon = (m) => m === "hosted" ? "\u2601\uFE0F GitHub-hosted" : "\u{1F3E0} self-hosted";
   const rows = r.repos.map((x) => `| ${x.repo} | \`${x.variable}\` | \`${x.value}\` | ${x.action}${x.error ? `: ${x.error}` : ""} |`).join("\n");
   return [
@@ -7981,7 +8039,7 @@ function summaryMarkdown(r, cfg) {
     "",
     `| Cycle | Used | From allowance | Allowance | Billed |`,
     `|---|---|---|---|---|`,
-    `| ${r.usage.cycle} | ${r.usage.grossMinutes} min | ${r.usage.includedUsed} min (${r.decision.percentUsed}%) | ${cfg.includedMinutes} min | ${r.usage.billedMinutes} min / $${r.usage.billedAmount} |`,
+    `| ${r.usage.cycle} | ${r.usage.grossMinutes} min | ${r.usage.includedUsed} min (${r.decision.percentUsed}%) | ${included} min | ${r.usage.billedMinutes} min / $${r.usage.billedAmount} |`,
     "",
     `| Repository | Variable | Value | Result |`,
     `|---|---|---|---|`,

@@ -36,7 +36,9 @@ export interface Config {
   selfHosted: RunsOn;
   overrides: Record<string, RepoOverride>;
 
+  /** Monthly included minutes; 0 with includedMinutesAuto means "read it from the plan". */
   includedMinutes: number;
+  includedMinutesAuto: boolean;
   switchAtPercent: number;
   /** "next-cycle" keeps self-hosted until the 1st; "below-percent" switches back under switchBackPercent. */
   switchBack: "next-cycle" | "below-percent";
@@ -47,6 +49,8 @@ export interface Config {
   switchOnOverage: boolean;
 
   detectRefusals: boolean;
+  /** How to recognise a billing refusal; see src/refusals.ts. */
+  refusalEvidence: "auto" | "annotations" | "heuristic";
   refusalLookbackMinutes: number;
   rerunRefused: boolean;
 
@@ -75,13 +79,15 @@ export const DEFAULTS: Omit<Config, "token" | "owner" | "stateRepo"> = {
   hosted: "ubuntu-latest",
   selfHosted: ["self-hosted"],
   overrides: {},
-  includedMinutes: 2000,
+  includedMinutes: 0,
+  includedMinutesAuto: true,
   switchAtPercent: 90,
   switchBack: "next-cycle",
   switchBackPercent: 50,
   skus: [],
   switchOnOverage: true,
   detectRefusals: true,
+  refusalEvidence: "auto",
   refusalLookbackMinutes: 120,
   rerunRefused: true,
   mode: "auto",
@@ -221,13 +227,17 @@ export function buildConfig(raw: RawSettings, context: { repository?: string } =
   set("variable", raw["variable"]?.trim() || undefined);
   set("hosted", parseRunsOn("hosted-runs-on", raw["hosted-runs-on"]));
   set("selfHosted", parseRunsOn("self-hosted-runs-on", raw["self-hosted-runs-on"]));
-  set("includedMinutes", num("included-minutes", raw["included-minutes"], 0, 10_000_000));
+  const im = raw["included-minutes"]?.trim();
+  if (im && /^auto$/i.test(im)) { cfg.includedMinutes = 0; cfg.includedMinutesAuto = true; }
+  else if (im) { set("includedMinutes", num("included-minutes", im, 0, 10_000_000)); cfg.includedMinutesAuto = false; }
+  else if (typeof (file as { includedMinutes?: unknown }).includedMinutes === "number") cfg.includedMinutesAuto = false;
   set("switchAtPercent", num("switch-at-percent", raw["switch-at-percent"], 1, 100));
   set("switchBack", oneOf("switch-back", raw["switch-back"], ["next-cycle", "below-percent"] as const));
   set("switchBackPercent", num("switch-back-percent", raw["switch-back-percent"], 0, 100));
   if (list(raw["skus"]).length) cfg.skus = list(raw["skus"]);
   set("switchOnOverage", bool("switch-on-overage", raw["switch-on-overage"]));
   set("detectRefusals", bool("detect-refusals", raw["detect-refusals"]));
+  set("refusalEvidence", oneOf("refusal-evidence", raw["refusal-evidence"], ["auto", "annotations", "heuristic"] as const));
   set("refusalLookbackMinutes", num("refusal-lookback-minutes", raw["refusal-lookback-minutes"], 5, 10_080));
   set("rerunRefused", bool("rerun-refused", raw["rerun-refused"]));
   set("mode", oneOf("mode", raw["mode"], ["auto", "hosted", "self-hosted"] as const));
@@ -264,13 +274,13 @@ function validateTypes(cfg: Config): void {
   range("switchAtPercent", 1, 100);
   range("switchBackPercent", 0, 100);
   range("refusalLookbackMinutes", 5, 10_080);
-  for (const k of ["includeArchived", "includeForks", "switchOnOverage", "detectRefusals", "rerunRefused", "dryRun"] as const) {
+  for (const k of ["includeArchived", "includeForks", "switchOnOverage", "detectRefusals", "rerunRefused", "dryRun", "includedMinutesAuto"] as const) {
     if (typeof cfg[k] !== "boolean") throw new ConfigError(`${k}: expected true/false, got ${JSON.stringify(cfg[k])}`);
   }
   for (const k of ["repos", "reposInclude", "reposExclude", "skus"] as const) {
     if (!Array.isArray(cfg[k]) || !cfg[k].every((x) => typeof x === "string")) throw new ConfigError(`${k}: expected a list of strings`);
   }
-  const enums: [keyof Config, readonly string[]][] = [["ownerType", ["auto", "user", "organization"]], ["switchBack", ["next-cycle", "below-percent"]], ["mode", ["auto", "hosted", "self-hosted"]]];
+  const enums: [keyof Config, readonly string[]][] = [["refusalEvidence", ["auto", "annotations", "heuristic"]], ["ownerType", ["auto", "user", "organization"]], ["switchBack", ["next-cycle", "below-percent"]], ["mode", ["auto", "hosted", "self-hosted"]]];
   for (const [k, allowed] of enums) if (!allowed.includes(cfg[k] as string)) throw new ConfigError(`${String(k)}: expected one of ${allowed.join(", ")}, got ${JSON.stringify(cfg[k])}`);
   validateRunsOn("hosted", cfg.hosted);
   validateRunsOn("selfHosted", cfg.selfHosted);
