@@ -6,6 +6,11 @@ export interface Refusal {
   runId: number;
   jobName: string;
   reason: string;
+  /**
+   * annotation: GitHub's own billing message was read from the job's annotations (conclusive).
+   * heuristic:  a hosted job failed without a runner or steps; an outage or a typo'd label looks the same.
+   */
+  evidence: "annotation" | "heuristic";
 }
 
 export type RefusalEvidence = "auto" | "annotations" | "heuristic";
@@ -60,7 +65,7 @@ export async function findRefusals(
             // A job's id is also its check-run id.
             const anns = await gh.paginate<Annotation>(`/repos/${owner}/${repo}/check-runs/${job.id}/annotations`, {}, undefined, 20);
             const hit = anns.find((a) => BILLING_PATTERNS.some((p) => p.test(a.message ?? "")));
-            if (hit) out.push({ repo, runId: run.id, jobName: job.name, reason: hit.message!.slice(0, 200) });
+            if (hit) out.push({ repo, runId: run.id, jobName: job.name, reason: hit.message!.slice(0, 200), evidence: "annotation" });
             continue;
           } catch (e) {
             if (e instanceof GitHubError && e.status === 404) continue; // no annotations: no billing evidence
@@ -69,7 +74,7 @@ export async function findRefusals(
           }
         }
         if (wantedHosted(job)) {
-          out.push({ repo, runId: run.id, jobName: job.name, reason: `hosted job never started (${(job.labels ?? []).join(", ")}): no runner, no steps` });
+          out.push({ repo, runId: run.id, jobName: job.name, reason: `hosted job never started (${(job.labels ?? []).join(", ")}): no runner, no steps`, evidence: "heuristic" });
         }
       }
     }

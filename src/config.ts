@@ -53,6 +53,19 @@ export interface Config {
   refusalEvidence: "auto" | "annotations" | "heuristic";
   refusalLookbackMinutes: number;
   rerunRefused: boolean;
+  /** Heuristic refusals needed before they count (annotation evidence always counts). */
+  refusalMinCount: number;
+  /** Heuristic refusals count only at or above this share used (or once minutes are billed); 0 disables. */
+  refusalMinPercent: number;
+  /** Most re-runs per invocation. A run id is never re-run twice (tracked in state). */
+  maxReruns: number;
+
+  /** Warn (and notify once a day) when the token expires within this many days; 0 disables. */
+  tokenExpiryWarnDays: number;
+  /** Watchdog mode: only check that Overtime's state was refreshed recently. Decides and writes nothing. */
+  watchdog: boolean;
+  /** Watchdog: state older than this means Overtime stopped running. */
+  staleAfterMinutes: number;
 
   /** Manual override for everything: auto | hosted | self-hosted. */
   mode: "auto" | Mode;
@@ -90,6 +103,12 @@ export const DEFAULTS: Omit<Config, "token" | "owner" | "stateRepo"> = {
   refusalEvidence: "auto",
   refusalLookbackMinutes: 120,
   rerunRefused: true,
+  refusalMinCount: 2,
+  refusalMinPercent: 80,
+  maxReruns: 10,
+  tokenExpiryWarnDays: 14,
+  watchdog: false,
+  staleAfterMinutes: 60,
   mode: "auto",
   forceVariable: "OVERTIME_FORCE",
   stateVariable: "OVERTIME_STATE",
@@ -118,6 +137,12 @@ function num(name: string, v: string | undefined, min: number, max: number): num
   if (v === undefined || v.trim() === "") return undefined;
   const n = Number(v);
   if (!Number.isFinite(n) || n < min || n > max) throw new ConfigError(`${name}: expected a number ${min}-${max}, got "${v}"`);
+  return n;
+}
+
+function int(name: string, v: string | undefined, min: number, max: number): number | undefined {
+  const n = num(name, v, min, max);
+  if (n !== undefined && !Number.isInteger(n)) throw new ConfigError(`${name}: expected a whole number ${min}-${max}, got "${v}"`);
   return n;
 }
 
@@ -249,6 +274,12 @@ export function buildConfig(raw: RawSettings, context: { repository?: string } =
   set("refusalEvidence", oneOf("refusal-evidence", raw["refusal-evidence"], ["auto", "annotations", "heuristic"] as const));
   set("refusalLookbackMinutes", num("refusal-lookback-minutes", raw["refusal-lookback-minutes"], 5, 10_080));
   set("rerunRefused", bool("rerun-refused", raw["rerun-refused"]));
+  set("refusalMinCount", int("refusal-min-count", raw["refusal-min-count"], 1, 100));
+  set("refusalMinPercent", num("refusal-min-percent", raw["refusal-min-percent"], 0, 100));
+  set("maxReruns", int("max-reruns", raw["max-reruns"], 0, 100));
+  set("tokenExpiryWarnDays", int("token-expiry-warn-days", raw["token-expiry-warn-days"], 0, 365));
+  set("watchdog", bool("watchdog", raw["watchdog"]));
+  set("staleAfterMinutes", int("stale-after-minutes", raw["stale-after-minutes"], 5, 10_080));
   set("mode", oneOf("mode", raw["mode"], ["auto", "hosted", "self-hosted"] as const));
   set("forceVariable", raw["force-variable"]?.trim() || undefined);
   set("stateVariable", raw["state-variable"]?.trim() || undefined);
@@ -275,15 +306,22 @@ function normalizeFileNotify(v: unknown): NotifyTarget[] {
 
 /** Config-file values arrive typed by YAML, not by our parsers; check them the same way. */
 function validateTypes(cfg: Config): void {
-  const range = (k: keyof Config, min: number, max: number) => {
+  const range = (k: keyof Config, min: number, max: number, integer = false) => {
     const v = cfg[k];
-    if (typeof v !== "number" || !Number.isFinite(v) || v < min || v > max) throw new ConfigError(`${String(k)}: expected a number ${min}-${max}, got ${JSON.stringify(v)}`);
+    if (typeof v !== "number" || !Number.isFinite(v) || v < min || v > max || (integer && !Number.isInteger(v))) {
+      throw new ConfigError(`${String(k)}: expected a ${integer ? "whole " : ""}number ${min}-${max}, got ${JSON.stringify(v)}`);
+    }
   };
   range("includedMinutes", 0, 10_000_000);
   range("switchAtPercent", 1, 100);
   range("switchBackPercent", 0, 100);
   range("refusalLookbackMinutes", 5, 10_080);
-  for (const k of ["includeArchived", "includeForks", "switchOnOverage", "detectRefusals", "rerunRefused", "dryRun", "includedMinutesAuto"] as const) {
+  range("refusalMinCount", 1, 100, true);
+  range("refusalMinPercent", 0, 100);
+  range("maxReruns", 0, 100, true);
+  range("tokenExpiryWarnDays", 0, 365, true);
+  range("staleAfterMinutes", 5, 10_080, true);
+  for (const k of ["includeArchived", "includeForks", "switchOnOverage", "detectRefusals", "rerunRefused", "dryRun", "includedMinutesAuto", "watchdog"] as const) {
     if (typeof cfg[k] !== "boolean") throw new ConfigError(`${k}: expected true/false, got ${JSON.stringify(cfg[k])}`);
   }
   for (const k of ["repos", "reposInclude", "reposExclude", "skus"] as const) {
@@ -303,7 +341,8 @@ function validate(cfg: Config): void {
   if (cfg.switchBack === "below-percent" && cfg.switchBackPercent >= cfg.switchAtPercent) {
     throw new ConfigError("switch-back-percent must be lower than switch-at-percent, or the mode would flap");
   }
-  if (!cfg.repos.length && !cfg.reposInclude.length && !cfg.reposTopic) {
+  // The watchdog only reads the state variable, so it needs no repository selection.
+  if (!cfg.watchdog && !cfg.repos.length && !cfg.reposInclude.length && !cfg.reposTopic) {
     throw new ConfigError("choose repositories: repos, repos-include (globs) or repos-topic");
   }
   if (!cfg.stateRepo) throw new ConfigError("state-repo is required outside GitHub Actions");

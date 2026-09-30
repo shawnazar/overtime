@@ -29,6 +29,11 @@ export class GitHubClient {
   private readonly apiUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
+  /**
+   * When the token expires, from GitHub's `github-authentication-token-expiration` response header
+   * (sent for expiring tokens such as fine-grained PATs). Undefined until a response carries it.
+   */
+  tokenExpiresAt: Date | undefined;
 
   constructor(private readonly opts: GitHubClientOptions) {
     this.apiUrl = (opts.apiUrl ?? "https://api.github.com").replace(/\/$/, "");
@@ -77,6 +82,8 @@ export class GitHubClient {
         },
         body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
       });
+      const expires = parseTokenExpiration(res.headers.get("github-authentication-token-expiration"));
+      if (expires) this.tokenExpiresAt = expires;
       if (res.ok) return res;
       const text = await res.text();
       const retryable = res.status >= 500 || (res.status === 403 && /secondary rate limit/i.test(text)) || res.status === 429;
@@ -97,4 +104,18 @@ export function nextLink(link: string | null): string | undefined {
     if (m) return m[1];
   }
   return undefined;
+}
+
+/**
+ * GitHub sends e.g. "2027-09-29 00:00:00 UTC"; tolerate "…T…", offsets like "-0700"/"+05:30", "Z",
+ * a missing seconds field or a bare date (read as UTC midnight). Anything else: undefined.
+ */
+export function parseTokenExpiration(v: string | null | undefined): Date | undefined {
+  if (!v) return undefined;
+  const m = v.trim().match(/^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2})(:\d{2}(?:\.\d+)?)?)?\s*(UTC|GMT|Z|[+-]\d{2}:?\d{2})?$/i);
+  if (!m) return undefined;
+  const [, date, hm = "00:00", sec = ":00", zone = "Z"] = m;
+  const tz = /^(UTC|GMT|Z)$/i.test(zone) ? "Z" : zone.includes(":") ? zone : `${zone.slice(0, 3)}:${zone.slice(3)}`;
+  const d = new Date(`${date}T${hm}${sec}${tz}`);
+  return Number.isNaN(d.getTime()) ? undefined : d;
 }
