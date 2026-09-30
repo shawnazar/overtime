@@ -246,3 +246,21 @@ describe("config file hardening", () => {
     }
   });
 });
+
+describe("detectFormat (hostname, not substring)", () => {
+  it("recognises real Discord and Slack webhook hosts", async () => {
+    const { detectFormat } = await import("../src/config.js");
+    expect(detectFormat("https://discord.com/api/webhooks/1/abc")).toBe("discord");
+    expect(detectFormat("https://canary.discord.com/api/webhooks/1/abc")).toBe("discord");
+    expect(detectFormat("https://discordapp.com/api/webhooks/1/abc")).toBe("discord");
+    expect(detectFormat("https://hooks.slack.com/services/x")).toBe("slack");
+  });
+
+  it("does not trust look-alike URLs", async () => {
+    const { detectFormat } = await import("../src/config.js");
+    expect(detectFormat("https://evil.example/?x=discord.com/api/webhooks/1/a")).toBe("generic");
+    expect(detectFormat("https://discord.com.evil.example/api/webhooks/1/a")).toBe("generic");
+    expect(detectFormat("https://evil.example/hooks.slack.com")).toBe("generic");
+    expect(detectFormat("https://discord.com/not-webhooks")).toBe("generic");
+  });
+});

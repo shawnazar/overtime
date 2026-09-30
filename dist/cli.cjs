@@ -7438,13 +7438,24 @@ function oneOf(name, v, allowed) {
   if (!allowed.includes(t)) throw new ConfigError(`${name}: expected one of ${allowed.join(", ")}, got "${v}"`);
   return t;
 }
+function detectFormat(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    throw new ConfigError(`notify: "${url.slice(0, 40)}\u2026" is not a valid URL`);
+  }
+  const host = u.hostname.toLowerCase();
+  if ((host === "discord.com" || host === "discordapp.com" || host.endsWith(".discord.com")) && u.pathname.startsWith("/api/webhooks/")) return "discord";
+  if (host === "hooks.slack.com") return "slack";
+  return "generic";
+}
 function parseNotify(v) {
   return list(v).map((entry) => {
     const m = entry.match(/^(discord|slack|generic):(https:\/\/.+)$/i);
     if (m) return { format: m[1].toLowerCase(), url: m[2] };
     if (/^https:\/\//.test(entry)) {
-      const format = /discord(app)?\.com\/api\/webhooks/.test(entry) ? "discord" : /hooks\.slack\.com/.test(entry) ? "slack" : "generic";
-      return { format, url: entry };
+      return { format: detectFormat(entry), url: entry };
     }
     throw new ConfigError(`notify: "${entry.slice(0, 40)}\u2026" must be an https URL, optionally prefixed with discord:, slack: or generic:`);
   });
