@@ -124,7 +124,7 @@ Every setting is an action input, an `OVERTIME_*` environment variable (containe
 | `switch-at-percent` | `90` | Switch when this much of the allowance is used. Leave headroom for queued jobs |
 | `switch-back` | `next-cycle` | `next-cycle`, or `below-percent` (e.g. after raising the allowance) |
 | `switch-back-percent` | `50` | Used with `below-percent`; must be below `switch-at-percent` |
-| `skus` | all Actions minutes | Only count SKUs containing these strings (e.g. `linux`) |
+| `skus` | standard runners | Which Actions minute SKUs count. Default: standard Linux/Windows/macOS runners only, the ones included minutes cover. Larger runners (4-core+, GPU) are billed from minute one and would otherwise read as "minutes spent" on day 1. `all` counts everything; or list substrings (e.g. `linux`) |
 | `switch-on-overage` | `true` | Any billed minutes this cycle ⇒ self-hosted |
 | `detect-refusals` | `true` | Jobs GitHub won't start for billing reasons ⇒ self-hosted |
 | `refusal-evidence` | `auto` | How to recognise a billing refusal: `annotations` (GitHub's message; needs a classic PAT or App), `heuristic` (hosted job failed with no runner and no steps), or `auto` (annotations when readable, else heuristic) |
@@ -192,6 +192,9 @@ the current docs say self-hosted usage is free. Overtime doesn't assume either w
 403), so Overtime can't see GitHub's "spending limit" message with them. A GitHub-hosted job that failed without
 ever getting a runner or running a step is what a billing refusal looks like; `refusal-evidence: annotations`
 opts out of the heuristic.
+
+**We use larger runners. Will that trip Overtime?** No. Larger runners are never covered by included minutes, so by default
+Overtime ignores their SKUs; only standard-runner usage counts toward the threshold and the overage rule.
 
 **macOS/Windows minutes count double/10x.** GitHub reports minute quantities as billed; Overtime uses those, and
 `skus` lets you count only the runner types you care about.

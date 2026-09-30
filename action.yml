@@ -60,7 +60,7 @@ inputs:
     description: "Used with switch-back: below-percent. Default: 50."
     required: false
   skus:
-    description: "Only count SKUs containing these substrings (e.g. 'linux'). Default: every Actions minutes SKU."
+    description: "Which Actions minute SKUs count. Default: standard Linux/Windows/macOS runners only (larger runners are billed from minute one). all = every SKU, or substrings like linux."
     required: false
   switch-on-overage:
     description: "Switch as soon as any Actions minutes are billed this cycle. Default: true."

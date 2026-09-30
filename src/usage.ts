@@ -30,13 +30,34 @@ export function cycleOf(d: Date): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-/** Keep only Actions minute SKUs (optionally narrowed by `skus` substrings). */
+// Standard GitHub-hosted runner SKUs are the only ones the plan's included minutes cover.
+// Larger runners (e.g. actions_linux_4_core, actions_windows_8_core, GPU) are billed from
+// the first minute, so counting them would read "included minutes are spent" on day 1 (#8).
+// The standard macOS runner reports as "macOS 3-core" in older billing exports.
+const STANDARD_SKU = /^actions_(linux|windows|macos)(_arm(64)?)?$|^actions_macos_3_core$/;
+
+export function normalizeSku(sku: string | undefined): string {
+  return (sku ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+export function isStandardSku(sku: string | undefined): boolean {
+  return STANDARD_SKU.test(normalizeSku(sku));
+}
+
+/**
+ * Keep Actions minute SKUs that count against the allowance.
+ *  - skus empty (default): standard runners only.
+ *  - skus ["all"]: every Actions minutes SKU, including larger runners.
+ *  - otherwise: SKUs containing any of the given substrings.
+ */
 export function isActionsMinutes(item: UsageItem, skus: string[]): boolean {
   if (!/^actions$/i.test(item.product ?? "")) return false;
   if (item.unitType && !/minute/i.test(item.unitType)) return false; // storage etc.
-  if (!skus.length) return true;
-  const sku = (item.sku ?? "").toLowerCase();
-  return skus.some((s) => sku.includes(s.toLowerCase()));
+  // Larger runners always carry a distinctive SKU; an unnamed item is counted as standard.
+  if (!skus.length) return !item.sku || isStandardSku(item.sku);
+  if (skus.some((s) => s.trim().toLowerCase() === "all")) return true;
+  const sku = normalizeSku(item.sku);
+  return skus.some((s) => sku.includes(normalizeSku(s)));
 }
 
 export function summarize(items: UsageItem[], skus: string[], cycle: string, source: Usage["source"]): Usage {
