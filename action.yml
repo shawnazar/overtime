@@ -1,5 +1,5 @@
-name: "Overtime: free minutes first, self-hosted when they run out"
-description: "Routes runs-on per repo: GitHub-hosted while included Actions minutes last, your self-hosted runners after. Billing-aware, no Kubernetes."
+name: "Overtime"
+description: "Use GitHub-hosted runners while free Actions minutes last, then switch repos to your self-hosted runners automatically."
 author: "Shawn Azar"
 branding:
   icon: "clock"
