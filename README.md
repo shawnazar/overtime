@@ -37,8 +37,9 @@ every 10 min (on your self-hosted runner, so it works even when minutes are gone
   ├─ look for jobs GitHub refused     ── failed, never got a runner, annotation mentions billing
   ├─ decide:  forced? → refused? → any minutes billed? → used ≥ switch-at-percent? → sticky until next cycle
   ├─ write CI_RUNS_ON in each managed repo (only when it changes)
-  ├─ re-run jobs GitHub refused (once switched to self-hosted)
-  └─ post to Discord/Slack/webhook when the mode changes
+  ├─ re-run jobs GitHub refused (once switched to self-hosted; each run at most once)
+  ├─ save state with a lastChecked heartbeat (every run)
+  └─ post to Discord/Slack/webhook when the mode changes (and when the token is about to expire)
 ```
 
 The decision is a pure function ([`src/decide.ts`](src/decide.ts)) with every branch tested.
@@ -129,13 +130,19 @@ Every setting is an action input, an `OVERTIME_*` environment variable (containe
 | `detect-refusals` | `true` | Jobs GitHub won't start for billing reasons ⇒ self-hosted |
 | `refusal-evidence` | `auto` | How to recognise a billing refusal: `annotations` (GitHub's message; needs a classic PAT or App), `heuristic` (hosted job failed with no runner and no steps), or `auto` (annotations when readable, else heuristic) |
 | `refusal-lookback-minutes` | `120` | Window for refusal detection |
-| `rerun-refused` | `true` | Re-run refused jobs after switching |
+| `refusal-min-count` | `2` | Heuristic refusals needed before they count. Annotation-confirmed refusals always count (1 is enough). See [refusal evidence](#refusal-evidence) |
+| `refusal-min-percent` | `80` | Heuristic refusals count only at or above this share used, or once minutes are billed. `0` disables the floor |
+| `rerun-refused` | `true` | Re-run refused jobs after switching (only refusals that counted) |
+| `max-reruns` | `10` | Most runs re-run per invocation. A run is never re-run twice (the last 100 re-run ids are kept in state) |
 | `mode` | `auto` | `hosted` / `self-hosted` pins everything |
 | `force-variable` | `OVERTIME_FORCE` | Set this variable in the state repo to `hosted`/`self-hosted` to override without a deploy |
 | `state-repo` | running repo | Where Overtime stores its state |
-| `state-variable` | `OVERTIME_STATE` | Last decision (JSON), for hysteresis and change notifications |
+| `state-variable` | `OVERTIME_STATE` | Last decision (JSON): mode, trigger, `lastChecked` heartbeat, re-run ids. Written every run |
 | `notify` | | `discord:https://…`, `slack:https://…`, `generic:https://…`, or bare URLs |
 | `dry-run` | `false` | Decide and report only |
+| `token-expiry-warn-days` | `14` | Warn in the log and job summary when the token expires within this many days, and notify once per UTC day. `0` disables |
+| `watchdog` | `false` | Only check that Overtime is still running (see [Watchdog](#watchdog-is-overtime-still-running)); decides and writes nothing. CLI: `--watchdog` |
+| `stale-after-minutes` | `60` | Watchdog: state older than this means Overtime stopped. Allow for [cron jitter](#cron-jitter) |
 | `config-file` | | YAML with any of the above plus per-repo `overrides` |
 | `api-url` | `https://api.github.com` | GitHub Enterprise Server API URL |
 
@@ -160,7 +167,110 @@ overrides:
 ### Outputs
 
 `mode`, `changed`, `reason`, `percent-used`, `minutes-used`, `minutes-billed`, `repos`, `runs-on`. Each run also
-writes a job summary with the usage table and what changed per repo.
+writes a job summary with the usage table and what changed per repo. In watchdog mode: `stale`, `reason` and
+`mode` (the frozen mode).
+
+## Refusal evidence
+
+When GitHub refuses to start a hosted job for billing reasons, Overtime switches to self-hosted right away
+instead of waiting for the usage numbers (which lag). How sure it can be depends on the token:
+
+- **annotation**: GitHub's own message ("spending limit", "account payments have failed") was read from the
+  job's annotations. Conclusive: one is enough.
+- **heuristic**: fine-grained PATs get 403 on annotations, so Overtime falls back to "a job that asked for a
+  GitHub-hosted label failed without ever getting a runner or running a step". A GitHub outage or a mistyped
+  `runs-on` label looks exactly the same, so heuristic refusals only count when **both**:
+  - there are at least `refusal-min-count` of them (default 2), and
+  - usage is already high: at least `refusal-min-percent` of the included minutes used (default 80; `0` turns
+    the floor off), or minutes are already being billed.
+
+Ignored refusals are listed in the log and the decision's reason ("ignoring N unconfirmed refusal(s)").
+
+A refusal-driven switch is **not** sticky. Only usage-driven switches (threshold reached, minutes billed) keep
+repos self-hosted until the next cycle. When no counted refusals remain in the `refusal-lookback-minutes`
+window and usage is under `switch-at-percent`, Overtime goes back to hosted ("billing refusals cleared").
+Re-runs are bounded too: each run id is re-run at most once, and at most `max-reruns` per invocation.
+
+## Recovering from a wrong switch
+
+If Overtime switched to self-hosted when it shouldn't have (a false-positive refusal, a wrong
+`included-minutes`), in the state repo (the one running Overtime unless you set `state-repo`):
+
+- **Set the force variable to `hosted`**: Settings → Secrets and variables → Actions → Variables → `OVERTIME_FORCE`
+  (or your `force-variable`) = `hosted`. The next run writes hosted `runs-on` everywhere. Delete the variable to
+  return to automatic routing; if usage is under the threshold, it stays hosted.
+
+  ```sh
+  gh variable set OVERTIME_FORCE --body hosted -R you/state-repo
+  gh variable delete OVERTIME_FORCE -R you/state-repo   # later: back to auto
+  ```
+
+- **Or delete the state variable** (`OVERTIME_STATE`, or your `state-variable`). That forgets the sticky
+  "stay self-hosted until the cycle resets" decision, and the next run decides from scratch. If the cause is still
+  there (usage over the threshold, counted refusals) it will switch again, so fix the cause first
+  (e.g. raise `refusal-min-count`, or set `refusal-evidence: annotations` with a token that can read annotations).
+
+  ```sh
+  gh variable delete OVERTIME_STATE -R you/state-repo
+  ```
+
+## Watchdog: is Overtime still running?
+
+If Overtime stops running (runner offline, token expired, scheduled runs dropped), `CI_RUNS_ON` silently keeps
+its last value. Every non-dry run writes a `lastChecked` timestamp into the state variable, and **watchdog mode**
+checks it from somewhere else: it reads only the state variable, decides nothing and writes nothing. When
+`lastChecked` is missing or older than `stale-after-minutes`, it logs an error, notifies
+("Overtime hasn't run for 95 minutes; CI_RUNS_ON is frozen at self-hosted") and exits non-zero, so the failed
+run also shows up in GitHub's own failure emails.
+
+Run it as a scheduled workflow in a **public** repo: public repos get GitHub-hosted minutes for free, so the
+watchdog keeps working after the private-repo minutes (and maybe your self-hosted runner) are gone.
+
+```yaml
+# .github/workflows/overtime-watchdog.yml (in any PUBLIC repo)
+name: Overtime watchdog
+on:
+  schedule: [{ cron: "*/30 * * * *" }]
+  workflow_dispatch:
+permissions: {}
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest   # public repo: free hosted minutes
+    timeout-minutes: 5
+    steps:
+      - uses: shawnazar/overtime@v0
+        with:
+          token: ${{ secrets.OVERTIME_WATCHDOG_TOKEN }}   # Variables: read on the state repo is enough
+          watchdog: true
+          owner: you
+          state-repo: my-app                              # where Overtime keeps OVERTIME_STATE
+          stale-after-minutes: 60
+          notify: ${{ secrets.OVERTIME_DISCORD_WEBHOOK }}
+```
+
+Or anywhere cron runs (a NAS, a VPS), with the container: `--watchdog` checks once and exits 1 when stale.
+
+```sh
+*/30 * * * * docker run --rm -e OVERTIME_TOKEN=... -e OVERTIME_OWNER=you -e OVERTIME_STATE_REPO=my-app \
+  -e OVERTIME_NOTIFY=... ghcr.io/shawnazar/overtime:0 --watchdog
+```
+
+The watchdog notifies on every stale check (it has nowhere to remember that it already did), so its schedule is
+also its reminder interval. Use a token with only Variables: read on the state repo for it.
+
+### Cron jitter
+
+GitHub runs `schedule:` workflows on a best-effort basis: under load they are commonly delayed 5 to 15 minutes,
+sometimes more, and occasionally dropped. With Overtime every 10 minutes, a gap of 30 minutes between runs is
+normal on a busy day. Choose `stale-after-minutes` well above your schedule interval plus that jitter; `60` for a
+10-minute schedule avoids false alarms while still catching a stopped runner within the hour. The same applies to
+how fast Overtime reacts: `switch-at-percent` leaves headroom partly for this reason.
+
+### Token expiry
+
+Fine-grained PATs expire. GitHub reports the expiry on every API response, and when it is within
+`token-expiry-warn-days` (default 14) Overtime adds a warning to the log and job summary and sends one
+notification per UTC day (tracked in state as `tokenWarnedOn`) with the days left and the date.
 
 ## Self-hosted runners for many repos
 
@@ -190,8 +300,9 @@ the current docs say self-hosted usage is free. Overtime doesn't assume either w
 
 **Why a heuristic for refused jobs?** Fine-grained tokens can't read check-run annotations (GitHub returns
 403), so Overtime can't see GitHub's "spending limit" message with them. A GitHub-hosted job that failed without
-ever getting a runner or running a step is what a billing refusal looks like; `refusal-evidence: annotations`
-opts out of the heuristic.
+ever getting a runner or running a step is what a billing refusal looks like. Because outages and typo'd labels
+look the same, heuristic refusals need `refusal-min-count` of them and high usage before they count (see
+[Refusal evidence](#refusal-evidence)); `refusal-evidence: annotations` opts out of the heuristic entirely.
 
 **We use larger runners. Will that trip Overtime?** No. Larger runners are never covered by included minutes, so by default
 Overtime ignores their SKUs; only standard-runner usage counts toward the threshold and the overage rule.

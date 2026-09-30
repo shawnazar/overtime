@@ -75,7 +75,16 @@ inputs:
     description: "How far back to look for refused jobs. Default: 120."
     required: false
   rerun-refused:
-    description: "After switching to self-hosted, re-run the refused jobs. Default: true."
+    description: "After switching to self-hosted, re-run the refused jobs (only refusals that counted; never the same run twice). Default: true."
+    required: false
+  refusal-min-count:
+    description: "Heuristic refusals (hosted job never got a runner; an outage or a typo'd label looks the same) count only when at least this many are found. Annotation-confirmed refusals always count. Default: 2."
+    required: false
+  refusal-min-percent:
+    description: "Heuristic refusals count only when this share of the included minutes is used, or minutes are already billed. 0 disables the floor. Default: 80."
+    required: false
+  max-reruns:
+    description: "Most refused runs to re-run per invocation. Default: 10."
     required: false
   mode:
     description: "auto | hosted | self-hosted. Pins every managed repo; use for maintenance. Default: auto."
@@ -87,13 +96,22 @@ inputs:
     description: "Repo that stores Overtime's state variable. Default: the repo running this action."
     required: false
   state-variable:
-    description: "Variable holding the last decision (JSON), used for hysteresis and change notifications. Default: OVERTIME_STATE."
+    description: "Variable holding the last decision (JSON), used for hysteresis, change notifications, re-run dedupe and the lastChecked heartbeat the watchdog reads. Written every run. Default: OVERTIME_STATE."
     required: false
   notify:
-    description: "Webhooks for mode changes: 'discord:https://…', 'slack:https://…', 'generic:https://…' or bare URLs. Pass from a secret."
+    description: "Webhooks for mode changes (plus token-expiry and watchdog alerts): 'discord:https://…', 'slack:https://…', 'generic:https://…' or bare URLs. Pass from a secret."
     required: false
   dry-run:
     description: "Decide and report, change nothing. Default: false."
+    required: false
+  token-expiry-warn-days:
+    description: "Warn in the log/summary when the token expires within this many days, and notify once per UTC day. 0 disables. Default: 14."
+    required: false
+  watchdog:
+    description: "Watchdog mode: only check that Overtime's state (in state-repo) was refreshed within stale-after-minutes; notify and fail when it wasn't. Decides and writes nothing. Default: false."
+    required: false
+  stale-after-minutes:
+    description: "Watchdog: state older than this means Overtime stopped running. Allow for cron jitter. Default: 60."
     required: false
   config-file:
     description: "YAML file with any of the settings above in camelCase, plus per-repo `overrides` (see README). Inputs win over the file."
@@ -116,6 +134,8 @@ outputs:
     description: "JSON array of managed repos"
   runs-on:
     description: "JSON runs-on value written to the first managed repo"
+  stale:
+    description: "Watchdog mode only: true when Overtime hasn't run within stale-after-minutes"
 
 runs:
   using: "node24"

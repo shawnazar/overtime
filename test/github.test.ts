@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { GitHubClient, GitHubError, nextLink } from "../src/github.js";
+import { GitHubClient, GitHubError, nextLink, parseTokenExpiration } from "../src/github.js";
 import { client, fakeFetch } from "./helpers.js";
 
 describe("nextLink", () => {
@@ -106,5 +106,44 @@ describe("GitHubClient.paginate", () => {
   it("treats a missing key as an empty page", async () => {
     const { gh } = client(() => ({ body: {} }));
     expect(await gh.paginate("/x", {}, "workflow_runs")).toEqual([]);
+  });
+});
+
+describe("parseTokenExpiration", () => {
+  it("parses GitHub's format and common variants", () => {
+    expect(parseTokenExpiration("2027-09-29 00:00:00 UTC")!.toISOString()).toBe("2027-09-29T00:00:00.000Z");
+    expect(parseTokenExpiration("  2027-09-29 13:45:08 utc ")!.toISOString()).toBe("2027-09-29T13:45:08.000Z");
+    expect(parseTokenExpiration("2027-09-29 00:00:00 -0700")!.toISOString()).toBe("2027-09-29T07:00:00.000Z");
+    expect(parseTokenExpiration("2027-09-29T00:00:00+05:30")!.toISOString()).toBe("2027-09-28T18:30:00.000Z");
+    expect(parseTokenExpiration("2027-09-29T00:00:00Z")!.toISOString()).toBe("2027-09-29T00:00:00.000Z");
+    expect(parseTokenExpiration("2027-09-29 10:15 GMT")!.toISOString()).toBe("2027-09-29T10:15:00.000Z");
+    expect(parseTokenExpiration("2027-09-29")!.toISOString()).toBe("2027-09-29T00:00:00.000Z");
+  });
+
+  it("returns undefined for missing or unparseable values", () => {
+    for (const v of [null, undefined, "", "never", "2027-13-45 00:00:00 UTC", "29/09/2027", "2027-09-29 00:00:00 PST"]) {
+      expect(parseTokenExpiration(v)).toBeUndefined();
+    }
+  });
+});
+
+describe("GitHubClient.tokenExpiresAt", () => {
+  it("is undefined until a response carries the header, then keeps the latest value", async () => {
+    let header: string | undefined;
+    const { gh } = client(() => ({ body: {}, ...(header ? { headers: { "github-authentication-token-expiration": header } } : {}) }));
+    await gh.request("GET", "/x");
+    expect(gh.tokenExpiresAt).toBeUndefined();
+    header = "2027-09-29 00:00:00 UTC";
+    await gh.request("GET", "/x");
+    expect(gh.tokenExpiresAt!.toISOString()).toBe("2027-09-29T00:00:00.000Z");
+    header = undefined;
+    await gh.request("GET", "/x");
+    expect(gh.tokenExpiresAt!.toISOString()).toBe("2027-09-29T00:00:00.000Z");
+  });
+
+  it("captures the header from error responses too (e.g. a 404 variable lookup)", async () => {
+    const { gh } = client(() => ({ status: 404, body: { message: "Not Found" }, headers: { "github-authentication-token-expiration": "2027-01-02 03:04:05 UTC" } }));
+    await expect(gh.request("GET", "/x")).rejects.toThrow(GitHubError);
+    expect(gh.tokenExpiresAt!.toISOString()).toBe("2027-01-02T03:04:05.000Z");
   });
 });

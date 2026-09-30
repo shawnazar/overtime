@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { run, summaryMarkdown } from "../src/run.js";
+import { run, summaryMarkdown, watchdog, watchdogSummaryMarkdown, tokenExpiryWarning } from "../src/run.js";
 import type { State } from "../src/decide.js";
 import type { Config } from "../src/config.js";
 import { client, config, type Call } from "./helpers.js";
@@ -14,12 +14,20 @@ interface World {
   /** "repo/NAME" -> value */
   vars: Map<string, string>;
   /** repo -> failed runs with their jobs + annotations */
-  runs: Record<string, { id: number; jobs: { id: number; name: string; ran?: boolean; message: string }[] }[]>;
+  runs: Record<string, { id: number; jobs: { id: number; name: string; ran?: boolean; message: string; labels?: string[] }[] }[]>;
+  /** Fine-grained PAT: annotations answer 403, so refusal detection falls back to the heuristic. */
+  annotations403?: boolean;
+  /** Value of the github-authentication-token-expiration header on every response. */
+  tokenExpires?: string;
 }
 
 /** A small in-memory GitHub API: owner "me", variables, billing summary, runs/jobs/annotations, reruns. */
 function fakeGitHub(world: World) {
   const route = (c: Call) => {
+    const r = inner(c);
+    return r && world.tokenExpires ? { ...r, headers: { ...r.headers, "github-authentication-token-expiration": world.tokenExpires } } : r;
+  };
+  const inner = (c: Call): { status?: number; body?: unknown; headers?: Record<string, string> } | undefined => {
     const p = c.path;
     let m: RegExpMatchArray | null;
     if (c.method === "GET" && p === "/users/me") return { body: { login: "me", type: world.ownerType } };
@@ -58,12 +66,13 @@ function fakeGitHub(world: World) {
       return {
         body: {
           jobs: (r?.jobs ?? []).map((j) => ({
-            id: j.id, name: j.name, conclusion: "failure", runner_name: j.ran ? "GitHub Actions 2" : null, steps: j.ran ? [{ name: "Set up job" }] : [],
+            id: j.id, name: j.name, labels: j.labels ?? [], conclusion: "failure", runner_name: j.ran ? "GitHub Actions 2" : null, steps: j.ran ? [{ name: "Set up job" }] : [],
           })),
         },
       };
     }
     if (c.method === "GET" && (m = p.match(/^\/repos\/me\/([^/]+)\/check-runs\/(\d+)\/annotations$/))) {
+      if (world.annotations403) return { status: 403, body: { message: "Resource not accessible by personal access token" } };
       const job = (world.runs[m[1]!] ?? []).flatMap((r) => r.jobs).find((j) => j.id === Number(m![2]));
       return { body: job ? [{ message: job.message }] : [] };
     }
@@ -104,7 +113,7 @@ describe("run (end to end against a fake GitHub)", () => {
     expect(w.vars.get("b/CI_RUNS_ON")).toBe('"ubuntu-latest"');
 
     const saved = JSON.parse(w.vars.get("a/OVERTIME_STATE")!) as State;
-    expect(saved).toEqual({ mode: "hosted", cycle: "2026-09", since: NOW.toISOString(), reason: r.decision.reason });
+    expect(saved).toEqual({ mode: "hosted", cycle: "2026-09", since: NOW.toISOString(), reason: r.decision.reason, lastChecked: NOW.toISOString() });
     expect(r.reruns).toEqual([]);
     expect(r.warnings).toEqual([]);
 
@@ -167,7 +176,7 @@ describe("run (end to end against a fake GitHub)", () => {
     expect(calls.some((c) => c.path.includes("/actions/runs"))).toBe(false);
   });
 
-  it("over the percent threshold with no change: nothing written, no notification", async () => {
+  it("over the percent threshold with no change: only the state heartbeat is written, no notification", async () => {
     const w = world({
       includedUsed: 1900,
       vars: new Map([["a/CI_RUNS_ON", '["self-hosted"]'], ["b/CI_RUNS_ON", '["self-hosted"]'], ["a/OVERTIME_STATE", state("self-hosted")]]),
@@ -176,7 +185,9 @@ describe("run (end to end against a fake GitHub)", () => {
     const r = await run(withNotify(), NOW, gh);
     expect(r.decision).toMatchObject({ mode: "self-hosted", changed: false, percentUsed: 95 });
     expect(r.repos.map((x) => x.action)).toEqual(["unchanged", "unchanged"]);
-    expect(writes(calls)).toEqual([]);
+    expect(writes(calls).map((c) => `${c.method} ${c.path}`)).toEqual(["PATCH /repos/me/a/actions/variables/OVERTIME_STATE"]);
+    // since/reason describe how the mode was entered; only lastChecked moves.
+    expect(JSON.parse(w.vars.get("a/OVERTIME_STATE")!)).toEqual({ mode: "self-hosted", cycle: "2026-09", since: "2026-09-01T00:00:00.000Z", reason: "earlier", trigger: "usage", lastChecked: NOW.toISOString() });
     expect(webhook).not.toHaveBeenCalled();
   });
 
@@ -184,7 +195,7 @@ describe("run (end to end against a fake GitHub)", () => {
     const vars = new Map([["a/CI_RUNS_ON", '["self-hosted"]'], ["b/CI_RUNS_ON", '["self-hosted"]'], ["a/OVERTIME_STATE", state("self-hosted", "2026-09")]]);
     const same = fakeGitHub(world({ includedUsed: 10, vars }));
     expect((await run(config(), NOW, same.gh)).decision).toMatchObject({ mode: "self-hosted", changed: false });
-    expect(writes(same.calls)).toEqual([]);
+    expect(writes(same.calls).map((c) => c.path)).toEqual(["/repos/me/a/actions/variables/OVERTIME_STATE"]);
 
     const next = fakeGitHub(world({ includedUsed: 10, vars }));
     const r = await run(withNotify(), new Date("2026-10-01T00:05:00Z"), next.gh);
@@ -277,7 +288,7 @@ describe("summaryMarkdown", () => {
   it("marks dry runs, empty repo lists and warnings", () => {
     const cfg = config({ dryRun: true });
     const md = summaryMarkdown({
-      decision: { mode: "hosted", reason: "5% used", percentUsed: 5, changed: false },
+      decision: { mode: "hosted", reason: "5% used", percentUsed: 5, changed: false, refusals: [] },
       usage: { grossMinutes: 100, includedUsed: 100, billedMinutes: 0, billedAmount: 0, cycle: "2026-09", source: "summary" },
       refusals: [], repos: [], reruns: [], warnings: ["no repositories matched the selection"], includedMinutes: 2000,
     }, cfg);
@@ -285,5 +296,262 @@ describe("summaryMarkdown", () => {
     expect(md).toContain("| (none) | | | |");
     expect(md).toContain("**Warnings:**\n- no repositories matched the selection");
     expect(md).not.toContain("Refused jobs");
+  });
+});
+
+const HEURISTIC_JOB = { id: 1, name: "build", message: "", labels: ["ubuntu-latest"] };
+const reruns = (calls: Call[]) => calls.filter((c) => c.path.endsWith("/rerun-failed-jobs")).map((c) => c.path.split("/")[6]);
+const saved = (w: World): State => JSON.parse(w.vars.get("a/OVERTIME_STATE")!) as State;
+
+describe("run: refusal evidence (#9)", () => {
+  it("a single heuristic refusal at low usage is ignored: stays hosted, nothing re-run", async () => {
+    const w = world({ includedUsed: 100, annotations403: true, runs: { a: [{ id: 11, jobs: [HEURISTIC_JOB] }] } });
+    const { gh, calls } = fakeGitHub(w);
+    const r = await run(config(), NOW, gh);
+    expect(r.refusals.map((x) => x.evidence)).toEqual(["heuristic"]);
+    expect(r.decision).toMatchObject({ mode: "hosted", refusals: [] });
+    expect(r.decision.reason).toMatch(/ignoring 1 unconfirmed refusal/);
+    expect(reruns(calls)).toEqual([]);
+  });
+
+  it("enough heuristic refusals at high usage switch and are re-run", async () => {
+    const w = world({ includedUsed: 1700, annotations403: true, runs: { a: [{ id: 11, jobs: [HEURISTIC_JOB] }, { id: 12, jobs: [{ ...HEURISTIC_JOB, id: 2 }] }] } });
+    const { gh, calls } = fakeGitHub(w);
+    const r = await run(config(), NOW, gh);
+    expect(r.decision).toMatchObject({ mode: "self-hosted", trigger: "refusal" });
+    expect(reruns(calls)).toEqual(["11", "12"]);
+    expect(saved(w)).toMatchObject({ trigger: "refusal", reran: [11, 12] });
+  });
+
+  it("a refusal-driven switch returns to hosted once the refusals clear", async () => {
+    const w = world({ includedUsed: 100, runs: { a: [{ id: 11, jobs: [{ id: 1, name: "build", message: BILLING_MSG }] }] } });
+    const first = fakeGitHub(w);
+    expect((await run(config(), NOW, first.gh)).decision).toMatchObject({ mode: "self-hosted", trigger: "refusal" });
+    w.runs = {}; // out of the lookback window (or it was never a billing problem)
+    const second = fakeGitHub(w);
+    const r = await run(withNotify(), new Date(NOW.getTime() + 600_000), second.gh);
+    expect(r.decision).toMatchObject({ mode: "hosted", changed: true });
+    expect(r.decision.reason).toMatch(/^billing refusals cleared/);
+    expect(w.vars.get("a/CI_RUNS_ON")).toBe('"ubuntu-latest"');
+    expect(saved(w)).toMatchObject({ mode: "hosted", reran: [11] });
+    expect(saved(w)).not.toHaveProperty("trigger");
+  });
+});
+
+describe("run: re-run limits (#9)", () => {
+  const refused = (ids: number[]) => ({ a: ids.map((id) => ({ id, jobs: [{ id, name: `job${id}`, message: BILLING_MSG }] })) });
+
+  it("never re-runs the same run id twice across invocations (ids persist in state)", async () => {
+    const w = world({ runs: refused([11]) });
+    const first = fakeGitHub(w);
+    expect((await run(config(), NOW, first.gh)).reruns).toEqual([11]);
+    expect(saved(w).reran).toEqual([11]);
+
+    // The re-run was refused again: same run id, still in the lookback window.
+    const second = fakeGitHub(w);
+    const r = await run(config(), new Date(NOW.getTime() + 600_000), second.gh);
+    expect(r.decision.mode).toBe("self-hosted");
+    expect(r.reruns).toEqual([]);
+    expect(reruns(second.calls)).toEqual([]);
+    expect(saved(w).reran).toEqual([11]);
+  });
+
+  it("caps re-runs per invocation at max-reruns and picks up the rest next time", async () => {
+    const w = world({ runs: refused([11, 12, 13]) });
+    const first = fakeGitHub(w);
+    const r1 = await run(config({ maxReruns: 2 }), NOW, first.gh);
+    expect(r1.reruns).toEqual([11, 12]);
+    expect(r1.warnings).toContain("re-run cap reached (max-reruns: 2); 1 refused run(s) left for the next run");
+    expect(saved(w).reran).toEqual([11, 12]);
+
+    const second = fakeGitHub(w);
+    const r2 = await run(config({ maxReruns: 2 }), new Date(NOW.getTime() + 600_000), second.gh);
+    expect(r2.reruns).toEqual([13]);
+    expect(r2.warnings).toEqual([]);
+    expect(saved(w).reran).toEqual([11, 12, 13]);
+  });
+
+  it("max-reruns 0 re-runs nothing", async () => {
+    const { gh, calls } = fakeGitHub(world({ runs: refused([11]) }));
+    const r = await run(config({ maxReruns: 0 }), NOW, gh);
+    expect(r.reruns).toEqual([]);
+    expect(reruns(calls)).toEqual([]);
+  });
+
+  it("keeps only the last 100 re-run ids", async () => {
+    const old = Array.from({ length: 100 }, (_, i) => 1000 + i);
+    const vars = new Map([["a/OVERTIME_STATE", JSON.stringify({ mode: "self-hosted", cycle: "2026-09", since: "x", reason: "earlier", reran: old })]]);
+    const w = world({ vars, runs: refused([11]) });
+    const { gh } = fakeGitHub(w);
+    await run(config(), NOW, gh);
+    const ids = saved(w).reran!;
+    expect(ids).toHaveLength(100);
+    expect(ids[0]).toBe(1001);
+    expect(ids.at(-1)).toBe(11);
+  });
+});
+
+describe("run: heartbeat and token expiry (#10)", () => {
+  it("writes lastChecked on every non-dry run, even when nothing changed", async () => {
+    const w = world({ includedUsed: 100 });
+    await run(config(), NOW, fakeGitHub(w).gh);
+    expect(saved(w).lastChecked).toBe(NOW.toISOString());
+    const later = new Date(NOW.getTime() + 600_000);
+    const second = fakeGitHub(w);
+    const r = await run(withNotify(), later, second.gh);
+    expect(r.decision.changed).toBe(false);
+    expect(saved(w)).toMatchObject({ lastChecked: later.toISOString(), since: NOW.toISOString() });
+    expect(webhook).not.toHaveBeenCalled(); // still only notifies on mode change
+  });
+
+  it("warns when the token expires soon and notifies once per UTC day", async () => {
+    const vars = new Map([["a/CI_RUNS_ON", '"ubuntu-latest"'], ["b/CI_RUNS_ON", '"ubuntu-latest"'], ["a/OVERTIME_STATE", state("hosted")]]);
+    const w = world({ vars, tokenExpires: "2026-09-20 00:00:00 UTC" });
+
+    const r1 = await run(withNotify(), NOW, fakeGitHub(w).gh);
+    const warning = "the GitHub token expires in 5 day(s), on 2026-09-20 (2026-09-20T00:00:00.000Z); rotate it and update the secret before then";
+    expect(r1.warnings).toEqual([warning]);
+    expect(webhook).toHaveBeenCalledTimes(1);
+    expect(JSON.parse((webhook.mock.calls[0]![1] as RequestInit).body as string)).toMatchObject({
+      event: "overtime.token_expiring", daysLeft: 5, expiresOn: "2026-09-20", owner: "me",
+      text: `${warning}. When it expires, CI_RUNS_ON stops being managed.`,
+    });
+    expect(saved(w).tokenWarnedOn).toBe("2026-09-15");
+
+    // Same UTC day: warning again, no second notification.
+    const r2 = await run(withNotify(), new Date("2026-09-15T23:50:00Z"), fakeGitHub(w).gh);
+    expect(r2.warnings).toHaveLength(1);
+    expect(webhook).toHaveBeenCalledTimes(1);
+    expect(saved(w).tokenWarnedOn).toBe("2026-09-15");
+
+    // Next UTC day: one more.
+    await run(withNotify(), new Date("2026-09-16T00:10:00Z"), fakeGitHub(w).gh);
+    expect(webhook).toHaveBeenCalledTimes(2);
+    expect(saved(w).tokenWarnedOn).toBe("2026-09-16");
+  });
+
+  it("does not record the day when the notification failed, so it retries", async () => {
+    webhook.mockImplementation(async () => new Response("no", { status: 500 }));
+    const w = world({ vars: new Map([["a/OVERTIME_STATE", state("hosted")]]), tokenExpires: "2026-09-20 00:00:00 UTC" });
+    const r = await run(withNotify(), NOW, fakeGitHub(w).gh);
+    expect(r.warnings).toContain("generic webhook -> 500");
+    expect(saved(w)).not.toHaveProperty("tokenWarnedOn");
+  });
+
+  it("no warning outside the window, when disabled, or without the header", async () => {
+    const far = await run(config(), NOW, fakeGitHub(world({ tokenExpires: "2026-10-30 00:00:00 UTC" })).gh);
+    expect(far.warnings).toEqual([]);
+    const off = await run(config({ tokenExpiryWarnDays: 0 }), NOW, fakeGitHub(world({ tokenExpires: "2026-09-16 00:00:00 UTC" })).gh);
+    expect(off.warnings).toEqual([]);
+    const none = await run(config(), NOW, fakeGitHub(world()).gh);
+    expect(none.warnings).toEqual([]);
+  });
+
+  it("without notify targets it only warns and records nothing", async () => {
+    const w = world({ tokenExpires: "2026-09-20 00:00:00 UTC" });
+    const r = await run(config(), NOW, fakeGitHub(w).gh);
+    expect(r.warnings).toHaveLength(1);
+    expect(webhook).not.toHaveBeenCalled();
+    expect(saved(w)).not.toHaveProperty("tokenWarnedOn");
+  });
+
+  it("dry runs warn but neither notify nor write", async () => {
+    const w = world({ vars: new Map([["a/OVERTIME_STATE", state("hosted")]]), tokenExpires: "2026-09-20 00:00:00 UTC" });
+    const { gh, calls } = fakeGitHub(w);
+    const r = await run(withNotify({ dryRun: true }), NOW, gh);
+    expect(r.warnings).toHaveLength(1);
+    expect(webhook).not.toHaveBeenCalled();
+    expect(writes(calls)).toEqual([]);
+  });
+});
+
+describe("tokenExpiryWarning", () => {
+  it("reports days left (rounded up), the date, and expired tokens", () => {
+    expect(tokenExpiryWarning(new Date("2026-09-29T00:00:00Z"), NOW, 14)).toMatchObject({ daysLeft: 14, date: "2026-09-29" });
+    expect(tokenExpiryWarning(new Date("2026-09-29T12:00:01Z"), NOW, 14)).toBeUndefined();
+    expect(tokenExpiryWarning(new Date("2026-09-15T13:00:00Z"), NOW, 14)).toMatchObject({ daysLeft: 1 });
+    expect(tokenExpiryWarning(new Date("2026-09-10T00:00:00Z"), NOW, 14)!.text).toBe("the GitHub token expired on 2026-09-10; create a new one and update the secret");
+    expect(tokenExpiryWarning(undefined, NOW, 14)).toBeUndefined();
+    expect(tokenExpiryWarning(new Date("2026-09-16T00:00:00Z"), NOW, 0)).toBeUndefined();
+  });
+});
+
+describe("watchdog (#10)", () => {
+  const withState = (st: object | undefined) => world({ vars: st ? new Map([["a/OVERTIME_STATE", JSON.stringify(st)]]) : new Map() });
+  const base = { mode: "self-hosted", cycle: "2026-09", since: "2026-09-01T00:00:00.000Z", reason: "earlier" };
+  const wd = (over: Partial<Config> = {}) => withNotify({ watchdog: true, ...over });
+
+  it("fresh state: ok, no writes, no notification", async () => {
+    const { gh, calls } = fakeGitHub(withState({ ...base, lastChecked: "2026-09-15T11:50:00.000Z" }));
+    const r = await watchdog(wd(), NOW, gh);
+    expect(r).toMatchObject({ ok: true, minutesSince: 10 });
+    expect(r.message).toBe("OK: Overtime last ran 10 minute(s) ago (2026-09-15T11:50:00.000Z); CI_RUNS_ON is self-hosted");
+    expect(writes(calls)).toEqual([]);
+    expect(calls.map((c) => c.path)).toEqual(["/repos/me/a/actions/variables/OVERTIME_STATE"]);
+    expect(webhook).not.toHaveBeenCalled();
+    expect(watchdogSummaryMarkdown(r)).toContain("✅ running");
+  });
+
+  it("exactly at stale-after-minutes is still fresh", async () => {
+    const { gh } = fakeGitHub(withState({ ...base, lastChecked: "2026-09-15T11:00:00.000Z" }));
+    expect((await watchdog(wd(), NOW, gh)).ok).toBe(true);
+  });
+
+  it("stale state: not ok, notifies, writes nothing", async () => {
+    const { gh, calls } = fakeGitHub(withState({ ...base, lastChecked: "2026-09-15T10:30:00.000Z" }));
+    const r = await watchdog(wd(), NOW, gh);
+    expect(r).toMatchObject({ ok: false, minutesSince: 90 });
+    expect(r.message).toBe("Overtime hasn't run for 90 minutes; CI_RUNS_ON is frozen at self-hosted");
+    expect(writes(calls)).toEqual([]);
+    expect(webhook).toHaveBeenCalledTimes(1);
+    expect(JSON.parse((webhook.mock.calls[0]![1] as RequestInit).body as string)).toMatchObject({
+      event: "overtime.stale", text: r.message, mode: "self-hosted", minutesSince: 90, staleAfterMinutes: 60,
+    });
+    expect(watchdogSummaryMarkdown(r)).toContain("❌ stale");
+  });
+
+  it("honours stale-after-minutes and the variable name", async () => {
+    const { gh } = fakeGitHub(withState({ ...base, lastChecked: "2026-09-15T10:30:00.000Z" }));
+    expect((await watchdog(wd({ staleAfterMinutes: 120 }), NOW, gh)).ok).toBe(true);
+    const r = await watchdog(wd({ staleAfterMinutes: 30, variable: "RUNS_ON" }), NOW, fakeGitHub(withState({ ...base, lastChecked: "2026-09-15T10:30:00.000Z" })).gh);
+    expect(r.message).toBe("Overtime hasn't run for 90 minutes; RUNS_ON is frozen at self-hosted");
+  });
+
+  it("state without lastChecked (written by an older Overtime) is stale", async () => {
+    const { gh, calls } = fakeGitHub(withState(base));
+    const r = await watchdog(wd(), NOW, gh);
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/hasn't recorded when it last ran .* CI_RUNS_ON is frozen at self-hosted$/);
+    expect(writes(calls)).toEqual([]);
+    expect(webhook).toHaveBeenCalledTimes(1);
+  });
+
+  it("missing state: not ok, notifies, writes nothing", async () => {
+    const { gh, calls } = fakeGitHub(withState(undefined));
+    const r = await watchdog(wd(), NOW, gh);
+    expect(r.ok).toBe(false);
+    expect(r.state).toBeUndefined();
+    expect(r.message).toBe("Overtime has no state in me/a variable OVERTIME_STATE; it may never have run, and CI_RUNS_ON is not being managed");
+    expect(writes(calls)).toEqual([]);
+    expect(JSON.parse((webhook.mock.calls[0]![1] as RequestInit).body as string)).toMatchObject({ event: "overtime.stale", mode: null, lastChecked: null });
+  });
+
+  it("surfaces webhook failures and token expiry as warnings", async () => {
+    webhook.mockImplementation(async () => new Response("no", { status: 500 }));
+    const w = withState(base); // a 200 response, so it carries the expiry header
+    w.tokenExpires = "2026-09-20 00:00:00 UTC";
+    const r = await watchdog(wd(), NOW, fakeGitHub(w).gh);
+    expect(r.warnings).toEqual([expect.stringMatching(/token expires in 5 day/), "generic webhook -> 500"]);
+  });
+
+  it("throws when the state can't be read (e.g. no access), rather than reporting healthy", async () => {
+    const { gh } = client(() => ({ status: 403, body: { message: "forbidden" } }), 0);
+    await expect(watchdog(wd(), NOW, gh)).rejects.toThrow(/403/);
+  });
+
+  it("run() refuses to act in watchdog mode, so it can never decide or write", async () => {
+    const { gh, calls } = fakeGitHub(world());
+    await expect(run(config({ watchdog: true }), NOW, gh)).rejects.toThrow(/watchdog/);
+    expect(calls).toEqual([]);
   });
 });

@@ -57,8 +57,8 @@ describe("findRefusals", () => {
     const since = new Date("2026-09-15T10:00:00.123Z");
     const r = await findRefusals(gh, "me", ["a", "b"], since);
     expect(r).toEqual([
-      { repo: "a", runId: 100, jobName: "billing-refused", reason: billing },
-      { repo: "a", runId: 101, jobName: "spending", reason: "The job was not started because you have reached your spending limit." },
+      { repo: "a", runId: 100, jobName: "billing-refused", reason: billing, evidence: "annotation" },
+      { repo: "a", runId: 101, jobName: "spending", reason: "The job was not started because you have reached your spending limit.", evidence: "annotation" },
     ]);
     const runsCall = calls.find((c) => c.path === "/repos/me/a/actions/runs")!;
     expect(runsCall.url.searchParams.get("status")).toBe("failure");
@@ -112,6 +112,7 @@ describe("findRefusals with a fine-grained PAT (annotations 403)", () => {
     const r = await findRefusals(gh, "me", ["a"], new Date(), "auto");
     expect(r.map((x) => x.jobName)).toEqual(["hosted-refused"]);
     expect(r[0]!.reason).toMatch(/ubuntu-latest/);
+    expect(r[0]!.evidence).toBe("heuristic");
   });
 
   it("heuristic never calls the annotations endpoint", async () => {

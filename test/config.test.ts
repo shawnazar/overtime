@@ -264,3 +264,44 @@ describe("detectFormat (hostname, not substring)", () => {
     expect(detectFormat("https://discord.com/not-webhooks")).toBe("generic");
   });
 });
+
+describe("buildConfig: refusal, re-run, expiry and watchdog settings (#9, #10)", () => {
+  it("has the documented defaults", () => {
+    expect(build({})).toMatchObject({ refusalMinCount: 2, refusalMinPercent: 80, maxReruns: 10, tokenExpiryWarnDays: 14, watchdog: false, staleAfterMinutes: 60 });
+  });
+
+  it("parses the settings from inputs/env", () => {
+    expect(build({ "refusal-min-count": "3", "refusal-min-percent": "0", "max-reruns": "0", "token-expiry-warn-days": "30", watchdog: "true", "stale-after-minutes": "90" }))
+      .toMatchObject({ refusalMinCount: 3, refusalMinPercent: 0, maxReruns: 0, tokenExpiryWarnDays: 30, watchdog: true, staleAfterMinutes: 90 });
+    expect(build({ "refusal-min-percent": "72.5" }).refusalMinPercent).toBe(72.5);
+  });
+
+  it("validates ranges and whole numbers", () => {
+    expect(() => build({ "refusal-min-count": "0" })).toThrow(/refusal-min-count: expected a number 1-100/);
+    expect(() => build({ "refusal-min-count": "1.5" })).toThrow(/refusal-min-count: expected a whole number/);
+    expect(() => build({ "refusal-min-percent": "101" })).toThrow(/refusal-min-percent/);
+    expect(() => build({ "max-reruns": "-1" })).toThrow(/max-reruns/);
+    expect(() => build({ "token-expiry-warn-days": "366" })).toThrow(/token-expiry-warn-days/);
+    expect(() => build({ "stale-after-minutes": "4" })).toThrow(/stale-after-minutes/);
+    expect(() => build({ watchdog: "sometimes" })).toThrow(/watchdog: expected true\/false/);
+  });
+
+  it("reads them from the config file and type-checks them", () => {
+    const f = yamlFile("refusalMinCount: 4\nrefusalMinPercent: 50\nmaxReruns: 3\ntokenExpiryWarnDays: 7\nwatchdog: true\nstaleAfterMinutes: 45\n");
+    expect(buildConfig({ ...base, "config-file": f })).toMatchObject({ refusalMinCount: 4, refusalMinPercent: 50, maxReruns: 3, tokenExpiryWarnDays: 7, watchdog: true, staleAfterMinutes: 45 });
+    const bad: [string, RegExp][] = [
+      ["refusalMinCount: 2.5\n", /refusalMinCount: expected a whole number/],
+      ["refusalMinPercent: high\n", /refusalMinPercent/],
+      ["maxReruns: 1000\n", /maxReruns/],
+      ["tokenExpiryWarnDays: -1\n", /tokenExpiryWarnDays/],
+      ["watchdog: maybe\n", /watchdog/],
+      ["staleAfterMinutes: 1\n", /staleAfterMinutes/],
+    ];
+    for (const [yaml, re] of bad) expect(() => buildConfig({ ...base, "config-file": yamlFile(yaml) })).toThrow(re);
+  });
+
+  it("watchdog mode needs a state repo but no repository selection", () => {
+    expect(buildConfig({ token: "tok", owner: "me", "state-repo": "s", watchdog: "true" })).toMatchObject({ watchdog: true, stateRepo: "s", repos: [] });
+    expect(() => buildConfig({ token: "tok", owner: "me", watchdog: "true" })).toThrow(/state-repo is required/);
+  });
+});

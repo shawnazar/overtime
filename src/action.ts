@@ -2,7 +2,7 @@ import { appendFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { buildConfig } from "./config.js";
 import { fromActionInputs } from "./inputs.js";
-import { run, summaryMarkdown } from "./run.js";
+import { run, summaryMarkdown, watchdog, watchdogSummaryMarkdown } from "./run.js";
 import { log } from "./log.js";
 
 function setOutput(name: string, value: string): void {
@@ -16,6 +16,15 @@ async function main(): Promise<void> {
   const raw = fromActionInputs();
   if (raw.token) log.mask(raw.token);
   const cfg = buildConfig(raw, { repository: process.env.GITHUB_REPOSITORY });
+  if (cfg.watchdog) {
+    const w = await watchdog(cfg);
+    setOutput("stale", String(!w.ok));
+    setOutput("reason", w.message);
+    if (w.state) setOutput("mode", w.state.mode);
+    if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, watchdogSummaryMarkdown(w) + "\n");
+    if (!w.ok) process.exitCode = 1;
+    return;
+  }
   const result = await run(cfg);
 
   setOutput("mode", result.decision.mode);

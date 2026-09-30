@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, notify, type Event } from "../src/notify.js";
+import { render, notify, renderAlert, notifyAlert, type Event, type Alert } from "../src/notify.js";
 
 const event: Event = { mode: "self-hosted", previous: "hosted", reason: "92% used", owner: "me", repos: ["a", "b"], percentUsed: 92, dryRun: false };
 
@@ -53,5 +53,22 @@ describe("notify", () => {
 
   it("returns [] with no targets", async () => {
     expect(await notify([], event, vi.fn() as unknown as typeof fetch)).toEqual([]);
+  });
+});
+
+describe("alerts (token expiry, watchdog)", () => {
+  const alert: Alert = { kind: "stale", text: "Overtime hasn't run for 90 minutes; CI_RUNS_ON is frozen at self-hosted", data: { minutesSince: 90 } };
+
+  it("renders per format", () => {
+    expect(renderAlert({ format: "discord", url: "https://x" }, alert)).toEqual({ content: `⏱️ **Overtime** — ${alert.text}`, allowed_mentions: { parse: [] } });
+    expect(renderAlert({ format: "slack", url: "https://x" }, alert)).toEqual({ text: `⏱️ *Overtime* — ${alert.text}` });
+    expect(renderAlert({ format: "generic", url: "https://x" }, alert)).toEqual({ event: "overtime.stale", text: alert.text, minutesSince: 90 });
+  });
+
+  it("posts to every target and reports failures", async () => {
+    const f = vi.fn(async (url: string) => new Response(null, { status: url.includes("bad") ? 500 : 204 }));
+    const errs = await notifyAlert([{ format: "generic", url: "https://ok" }, { format: "slack", url: "https://bad" }], alert, f as unknown as typeof fetch);
+    expect(f).toHaveBeenCalledTimes(2);
+    expect(errs).toEqual(["slack webhook -> 500"]);
   });
 });

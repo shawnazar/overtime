@@ -2462,7 +2462,7 @@ var require_int = __commonJS({
       resolve: (str, _onError, opt) => intResolve(str, 2, 8, opt),
       stringify: (node) => intStringify(node, 8, "0o")
     };
-    var int = {
+    var int2 = {
       identify: intIdentify,
       default: true,
       tag: "tag:yaml.org,2002:int",
@@ -2479,7 +2479,7 @@ var require_int = __commonJS({
       resolve: (str, _onError, opt) => intResolve(str, 2, 16, opt),
       stringify: (node) => intStringify(node, 16, "0x")
     };
-    exports2.int = int;
+    exports2.int = int2;
     exports2.intHex = intHex;
     exports2.intOct = intOct;
   }
@@ -2495,16 +2495,16 @@ var require_schema = __commonJS({
     var string = require_string();
     var bool2 = require_bool();
     var float = require_float();
-    var int = require_int();
+    var int2 = require_int();
     var schema = [
       map.map,
       seq.seq,
       string.string,
       _null.nullTag,
       bool2.boolTag,
-      int.intOct,
-      int.int,
-      int.intHex,
+      int2.intOct,
+      int2.int,
+      int2.intHex,
       float.floatNaN,
       float.floatExp,
       float.float
@@ -2938,7 +2938,7 @@ var require_int2 = __commonJS({
       resolve: (str, _onError, opt) => intResolve(str, 1, 8, opt),
       stringify: (node) => intStringify(node, 8, "0")
     };
-    var int = {
+    var int2 = {
       identify: intIdentify,
       default: true,
       tag: "tag:yaml.org,2002:int",
@@ -2955,7 +2955,7 @@ var require_int2 = __commonJS({
       resolve: (str, _onError, opt) => intResolve(str, 2, 16, opt),
       stringify: (node) => intStringify(node, 16, "0x")
     };
-    exports2.int = int;
+    exports2.int = int2;
     exports2.intBin = intBin;
     exports2.intHex = intHex;
     exports2.intOct = intOct;
@@ -3150,7 +3150,7 @@ var require_schema3 = __commonJS({
     var binary = require_binary();
     var bool2 = require_bool2();
     var float = require_float2();
-    var int = require_int2();
+    var int2 = require_int2();
     var merge = require_merge();
     var omap = require_omap();
     var pairs = require_pairs();
@@ -3163,10 +3163,10 @@ var require_schema3 = __commonJS({
       _null.nullTag,
       bool2.trueTag,
       bool2.falseTag,
-      int.intBin,
-      int.intOct,
-      int.int,
-      int.intHex,
+      int2.intBin,
+      int2.intOct,
+      int2.int,
+      int2.intHex,
       float.floatNaN,
       float.floatExp,
       float.float,
@@ -3193,7 +3193,7 @@ var require_tags = __commonJS({
     var string = require_string();
     var bool2 = require_bool();
     var float = require_float();
-    var int = require_int();
+    var int2 = require_int();
     var schema = require_schema();
     var schema$1 = require_schema2();
     var binary = require_binary();
@@ -3217,9 +3217,9 @@ var require_tags = __commonJS({
       floatExp: float.floatExp,
       floatNaN: float.floatNaN,
       floatTime: timestamp.floatTime,
-      int: int.int,
-      intHex: int.intHex,
-      intOct: int.intOct,
+      int: int2.int,
+      intHex: int2.intHex,
+      intOct: int2.intOct,
       intTime: timestamp.intTime,
       map: map.map,
       merge: merge.merge,
@@ -7386,6 +7386,12 @@ var DEFAULTS = {
   refusalEvidence: "auto",
   refusalLookbackMinutes: 120,
   rerunRefused: true,
+  refusalMinCount: 2,
+  refusalMinPercent: 80,
+  maxReruns: 10,
+  tokenExpiryWarnDays: 14,
+  watchdog: false,
+  staleAfterMinutes: 60,
   mode: "auto",
   forceVariable: "OVERTIME_FORCE",
   stateVariable: "OVERTIME_STATE",
@@ -7406,6 +7412,11 @@ function num(name, v, min, max) {
   if (v === void 0 || v.trim() === "") return void 0;
   const n = Number(v);
   if (!Number.isFinite(n) || n < min || n > max) throw new ConfigError(`${name}: expected a number ${min}-${max}, got "${v}"`);
+  return n;
+}
+function int(name, v, min, max) {
+  const n = num(name, v, min, max);
+  if (n !== void 0 && !Number.isInteger(n)) throw new ConfigError(`${name}: expected a whole number ${min}-${max}, got "${v}"`);
   return n;
 }
 function parseRunsOn(name, v) {
@@ -7522,6 +7533,12 @@ function buildConfig(raw, context = {}) {
   set("refusalEvidence", oneOf("refusal-evidence", raw["refusal-evidence"], ["auto", "annotations", "heuristic"]));
   set("refusalLookbackMinutes", num("refusal-lookback-minutes", raw["refusal-lookback-minutes"], 5, 10080));
   set("rerunRefused", bool("rerun-refused", raw["rerun-refused"]));
+  set("refusalMinCount", int("refusal-min-count", raw["refusal-min-count"], 1, 100));
+  set("refusalMinPercent", num("refusal-min-percent", raw["refusal-min-percent"], 0, 100));
+  set("maxReruns", int("max-reruns", raw["max-reruns"], 0, 100));
+  set("tokenExpiryWarnDays", int("token-expiry-warn-days", raw["token-expiry-warn-days"], 0, 365));
+  set("watchdog", bool("watchdog", raw["watchdog"]));
+  set("staleAfterMinutes", int("stale-after-minutes", raw["stale-after-minutes"], 5, 10080));
   set("mode", oneOf("mode", raw["mode"], ["auto", "hosted", "self-hosted"]));
   set("forceVariable", raw["force-variable"]?.trim() || void 0);
   set("stateVariable", raw["state-variable"]?.trim() || void 0);
@@ -7544,15 +7561,22 @@ function normalizeFileNotify(v) {
   });
 }
 function validateTypes(cfg) {
-  const range = (k, min, max) => {
+  const range = (k, min, max, integer = false) => {
     const v = cfg[k];
-    if (typeof v !== "number" || !Number.isFinite(v) || v < min || v > max) throw new ConfigError(`${String(k)}: expected a number ${min}-${max}, got ${JSON.stringify(v)}`);
+    if (typeof v !== "number" || !Number.isFinite(v) || v < min || v > max || integer && !Number.isInteger(v)) {
+      throw new ConfigError(`${String(k)}: expected a ${integer ? "whole " : ""}number ${min}-${max}, got ${JSON.stringify(v)}`);
+    }
   };
   range("includedMinutes", 0, 1e7);
   range("switchAtPercent", 1, 100);
   range("switchBackPercent", 0, 100);
   range("refusalLookbackMinutes", 5, 10080);
-  for (const k of ["includeArchived", "includeForks", "switchOnOverage", "detectRefusals", "rerunRefused", "dryRun", "includedMinutesAuto"]) {
+  range("refusalMinCount", 1, 100, true);
+  range("refusalMinPercent", 0, 100);
+  range("maxReruns", 0, 100, true);
+  range("tokenExpiryWarnDays", 0, 365, true);
+  range("staleAfterMinutes", 5, 10080, true);
+  for (const k of ["includeArchived", "includeForks", "switchOnOverage", "detectRefusals", "rerunRefused", "dryRun", "includedMinutesAuto", "watchdog"]) {
     if (typeof cfg[k] !== "boolean") throw new ConfigError(`${k}: expected true/false, got ${JSON.stringify(cfg[k])}`);
   }
   for (const k of ["repos", "reposInclude", "reposExclude", "skus"]) {
@@ -7571,7 +7595,7 @@ function validate(cfg) {
   if (cfg.switchBack === "below-percent" && cfg.switchBackPercent >= cfg.switchAtPercent) {
     throw new ConfigError("switch-back-percent must be lower than switch-at-percent, or the mode would flap");
   }
-  if (!cfg.repos.length && !cfg.reposInclude.length && !cfg.reposTopic) {
+  if (!cfg.watchdog && !cfg.repos.length && !cfg.reposInclude.length && !cfg.reposTopic) {
     throw new ConfigError("choose repositories: repos, repos-include (globs) or repos-topic");
   }
   if (!cfg.stateRepo) throw new ConfigError("state-repo is required outside GitHub Actions");
@@ -7606,13 +7630,19 @@ var SETTINGS = [
   "refusal-evidence",
   "refusal-lookback-minutes",
   "rerun-refused",
+  "refusal-min-count",
+  "refusal-min-percent",
+  "max-reruns",
   "mode",
   "force-variable",
   "state-repo",
   "state-variable",
   "notify",
   "dry-run",
-  "config-file"
+  "config-file",
+  "token-expiry-warn-days",
+  "watchdog",
+  "stale-after-minutes"
 ];
 function fromEnv(env = process.env) {
   return Object.fromEntries(SETTINGS.map((k) => [k, env[`OVERTIME_${k.toUpperCase().replace(/-/g, "_")}`]]));
@@ -7644,6 +7674,11 @@ var GitHubClient = class {
   apiUrl;
   fetchImpl;
   sleep;
+  /**
+   * When the token expires, from GitHub's `github-authentication-token-expiration` response header
+   * (sent for expiring tokens such as fine-grained PATs). Undefined until a response carries it.
+   */
+  tokenExpiresAt;
   async request(method, path, opts = {}) {
     const res = await this.raw(method, path, opts);
     const text = await res.text();
@@ -7682,6 +7717,8 @@ var GitHubClient = class {
         },
         body: opts.body !== void 0 ? JSON.stringify(opts.body) : void 0
       });
+      const expires = parseTokenExpiration(res.headers.get("github-authentication-token-expiration"));
+      if (expires) this.tokenExpiresAt = expires;
       if (res.ok) return res;
       const text = await res.text();
       const retryable = res.status >= 500 || res.status === 403 && /secondary rate limit/i.test(text) || res.status === 429;
@@ -7701,6 +7738,15 @@ function nextLink(link) {
     if (m) return m[1];
   }
   return void 0;
+}
+function parseTokenExpiration(v) {
+  if (!v) return void 0;
+  const m = v.trim().match(/^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2})(:\d{2}(?:\.\d+)?)?)?\s*(UTC|GMT|Z|[+-]\d{2}:?\d{2})?$/i);
+  if (!m) return void 0;
+  const [, date, hm = "00:00", sec = ":00", zone = "Z"] = m;
+  const tz = /^(UTC|GMT|Z)$/i.test(zone) ? "Z" : zone.includes(":") ? zone : `${zone.slice(0, 3)}:${zone.slice(3)}`;
+  const d = /* @__PURE__ */ new Date(`${date}T${hm}${sec}${tz}`);
+  return Number.isNaN(d.getTime()) ? void 0 : d;
 }
 
 // src/usage.ts
@@ -7786,7 +7832,7 @@ async function findRefusals(gh, owner, repos, since, evidence = "auto", maxRunsP
           try {
             const anns = await gh.paginate(`/repos/${owner}/${repo}/check-runs/${job.id}/annotations`, {}, void 0, 20);
             const hit = anns.find((a) => BILLING_PATTERNS.some((p) => p.test(a.message ?? "")));
-            if (hit) out.push({ repo, runId: run2.id, jobName: job.name, reason: hit.message.slice(0, 200) });
+            if (hit) out.push({ repo, runId: run2.id, jobName: job.name, reason: hit.message.slice(0, 200), evidence: "annotation" });
             continue;
           } catch (e) {
             if (e instanceof GitHubError && e.status === 404) continue;
@@ -7795,7 +7841,7 @@ async function findRefusals(gh, owner, repos, since, evidence = "auto", maxRunsP
           }
         }
         if (wantedHosted(job)) {
-          out.push({ repo, runId: run2.id, jobName: job.name, reason: `hosted job never started (${(job.labels ?? []).join(", ")}): no runner, no steps` });
+          out.push({ repo, runId: run2.id, jobName: job.name, reason: `hosted job never started (${(job.labels ?? []).join(", ")}): no runner, no steps`, evidence: "heuristic" });
         }
       }
     }
@@ -7804,37 +7850,94 @@ async function findRefusals(gh, owner, repos, since, evidence = "auto", maxRunsP
 }
 
 // src/decide.ts
+var RERAN_KEEP = 100;
+function countedRefusals(cfg, refusals, percentUsed, billedMinutes) {
+  const annotation = refusals.filter((r) => r.evidence !== "heuristic");
+  const heuristic = refusals.filter((r) => r.evidence === "heuristic");
+  const usageHigh = percentUsed >= cfg.refusalMinPercent || billedMinutes > 0;
+  const heuristicCounts = heuristic.length > 0 && heuristic.length >= cfg.refusalMinCount && usageHigh;
+  return heuristicCounts ? { counted: refusals, ignored: [] } : { counted: annotation, ignored: heuristic };
+}
+function triggerOf(s) {
+  if (s.trigger) return s.trigger;
+  if (/^GitHub refused /.test(s.reason)) return "refusal";
+  if (/^forced by /.test(s.reason)) return "force";
+  if (/minute\(s\) billed this cycle/.test(s.reason)) return "overage";
+  return "usage";
+}
+var sticky = (t) => t === "usage" || t === "overage";
 function decide(args) {
   const { cfg, usage, refusals, previous, force } = args;
   const percentUsed = cfg.includedMinutes > 0 ? Math.round(usage.includedUsed / cfg.includedMinutes * 1e3) / 10 : 100;
   const sameCycle = previous?.cycle === usage.cycle;
-  const make = (mode, reason) => ({ mode, reason, percentUsed, changed: mode !== previous?.mode });
+  const { counted, ignored } = countedRefusals(cfg, refusals, percentUsed, usage.billedMinutes);
+  const make = (mode, reason, trigger, used = []) => ({ mode, reason, percentUsed, changed: mode !== previous?.mode, trigger, refusals: used });
+  const note = ignored.length ? ` (ignoring ${ignored.length} unconfirmed refusal(s): heuristic evidence needs ${cfg.refusalMinCount}+ and ${cfg.refusalMinPercent}%+ used or billed minutes)` : "";
   const forced = (force ?? "").trim().toLowerCase();
-  if (forced === "hosted" || forced === "self-hosted") return make(forced, `forced by variable (${forced})`);
-  if (cfg.mode !== "auto") return make(cfg.mode, `forced by config (mode: ${cfg.mode})`);
-  if (refusals.length) {
-    const r = refusals[0];
-    return make("self-hosted", `GitHub refused ${refusals.length} hosted job(s), e.g. ${r.repo} run ${r.runId}: ${r.reason}`);
+  if (forced === "hosted" || forced === "self-hosted") return make(forced, `forced by variable (${forced})`, "force");
+  if (cfg.mode !== "auto") return make(cfg.mode, `forced by config (mode: ${cfg.mode})`, "force");
+  if (counted.length) {
+    const r = counted[0];
+    return make("self-hosted", `GitHub refused ${counted.length} hosted job(s), e.g. ${r.repo} run ${r.runId}: ${r.reason}`, "refusal", counted);
   }
   if (cfg.switchOnOverage && usage.billedMinutes > 0) {
-    return make("self-hosted", `${usage.billedMinutes} Actions minute(s) billed this cycle; included minutes are spent`);
+    return make("self-hosted", `${usage.billedMinutes} Actions minute(s) billed this cycle; included minutes are spent${note}`, "overage");
   }
   if (percentUsed >= cfg.switchAtPercent) {
-    return make("self-hosted", `${percentUsed}% of ${cfg.includedMinutes} included minutes used (threshold ${cfg.switchAtPercent}%)`);
+    return make("self-hosted", `${percentUsed}% of ${cfg.includedMinutes} included minutes used (threshold ${cfg.switchAtPercent}%)${note}`, "usage");
   }
   if (previous?.mode === "self-hosted" && sameCycle) {
-    if (cfg.switchBack === "next-cycle") return make("self-hosted", `staying self-hosted until the billing cycle resets (${previous.reason})`);
+    const t = triggerOf(previous);
+    if (t === "refusal") {
+      return make("hosted", `billing refusals cleared: none counted in the lookback window and ${percentUsed}% used is under ${cfg.switchAtPercent}%; back to GitHub-hosted${note}`, void 0);
+    }
+    if (t === "force") {
+      return make("hosted", `force removed: ${percentUsed}% used is under ${cfg.switchAtPercent}%; back to GitHub-hosted${note}`, void 0);
+    }
+    if (cfg.switchBack === "next-cycle") return make("self-hosted", `staying self-hosted until the billing cycle resets (${previous.reason})${note}`, t);
     if (percentUsed >= cfg.switchBackPercent) {
-      return make("self-hosted", `${percentUsed}% used; switch back below ${cfg.switchBackPercent}%`);
+      return make("self-hosted", `${percentUsed}% used; switch back below ${cfg.switchBackPercent}%${note}`, t);
     }
   }
-  return make("hosted", previous?.mode === "self-hosted" && !sameCycle ? `new billing cycle ${usage.cycle}: back to GitHub-hosted (${percentUsed}% used)` : `${percentUsed}% of ${cfg.includedMinutes} included minutes used`);
+  return make("hosted", (previous?.mode === "self-hosted" && !sameCycle ? `new billing cycle ${usage.cycle}: back to GitHub-hosted (${percentUsed}% used)` : `${percentUsed}% of ${cfg.includedMinutes} included minutes used`) + note, void 0);
 }
+function nextState(args) {
+  const { previous, decision, cycle, now } = args;
+  const fresh = !previous || decision.changed || previous.cycle !== cycle;
+  const prevTrigger = previous ? triggerOf(previous) : void 0;
+  const trigger = fresh || !sticky(prevTrigger) ? decision.trigger : prevTrigger;
+  const reasonMoves = fresh || trigger !== prevTrigger;
+  const s = {
+    mode: decision.mode,
+    cycle,
+    since: decision.changed || !previous ? now.toISOString() : previous.since,
+    reason: reasonMoves || !previous ? decision.reason : previous.reason,
+    lastChecked: now.toISOString()
+  };
+  if (trigger) s.trigger = trigger;
+  const reran = [...previous?.reran ?? [], ...args.reran ?? []].slice(-RERAN_KEEP);
+  if (reran.length) s.reran = reran;
+  const warned = args.tokenWarnedOn ?? previous?.tokenWarnedOn;
+  if (warned) s.tokenWarnedOn = warned;
+  return s;
+}
+var TRIGGERS = ["usage", "overage", "refusal", "force"];
 function parseState(raw) {
   if (!raw) return void 0;
   try {
     const s = JSON.parse(raw);
-    if ((s.mode === "hosted" || s.mode === "self-hosted") && typeof s.cycle === "string") return s;
+    if (!s || typeof s !== "object" || s.mode !== "hosted" && s.mode !== "self-hosted" || typeof s.cycle !== "string") return void 0;
+    const out = {
+      mode: s.mode,
+      cycle: s.cycle,
+      since: typeof s.since === "string" ? s.since : "",
+      reason: typeof s.reason === "string" ? s.reason : ""
+    };
+    if (TRIGGERS.includes(s.trigger)) out.trigger = s.trigger;
+    if (typeof s.lastChecked === "string" && !Number.isNaN(Date.parse(s.lastChecked))) out.lastChecked = s.lastChecked;
+    if (Array.isArray(s.reran)) out.reran = s.reran.filter((n) => Number.isSafeInteger(n)).slice(-RERAN_KEEP);
+    if (typeof s.tokenWarnedOn === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s.tokenWarnedOn)) out.tokenWarnedOn = s.tokenWarnedOn;
+    return out;
   } catch {
   }
   return void 0;
@@ -7917,11 +8020,23 @@ ${e.reason}`;
   if (target.format === "slack") return { text: text.replace(/\*\*/g, "*") };
   return { event: "overtime.mode_changed", ...e };
 }
+function renderAlert(target, a) {
+  const text = `\u23F1\uFE0F **Overtime** \u2014 ${a.text}`;
+  if (target.format === "discord") return { content: text.slice(0, 1900), allowed_mentions: { parse: [] } };
+  if (target.format === "slack") return { text: text.replace(/\*\*/g, "*") };
+  return { event: `overtime.${a.kind}`, text: a.text, ...a.data };
+}
 async function notify(targets, e, fetchImpl = fetch) {
+  return send(targets, (t) => render(t, e), fetchImpl);
+}
+async function notifyAlert(targets, a, fetchImpl = fetch) {
+  return send(targets, (t) => renderAlert(t, a), fetchImpl);
+}
+async function send(targets, body, fetchImpl) {
   const errors = [];
   for (const t of targets) {
     try {
-      const res = await fetchImpl(t.url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(render(t, e)) });
+      const res = await fetchImpl(t.url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body(t)) });
       if (!res.ok) errors.push(`${t.format} webhook -> ${res.status}`);
     } catch (err) {
       errors.push(`${t.format} webhook -> ${err instanceof Error ? err.message : String(err)}`);
@@ -7975,7 +8090,18 @@ async function includedMinutesFor(gh, owner, ownerType) {
 }
 
 // src/run.ts
+var DAY_MS = 864e5;
+function tokenExpiryWarning(expiresAt, now, warnDays) {
+  if (!expiresAt || warnDays <= 0) return void 0;
+  const ms = expiresAt.getTime() - now.getTime();
+  if (ms > warnDays * DAY_MS) return void 0;
+  const daysLeft = Math.max(0, Math.ceil(ms / DAY_MS));
+  const date = expiresAt.toISOString().slice(0, 10);
+  const text = ms <= 0 ? `the GitHub token expired on ${date}; create a new one and update the secret` : `the GitHub token expires in ${daysLeft} day(s), on ${date} (${expiresAt.toISOString()}); rotate it and update the secret before then`;
+  return { text, daysLeft, date };
+}
 async function run(cfgIn, now = /* @__PURE__ */ new Date(), gh = new GitHubClient({ token: cfgIn.token, apiUrl: cfgIn.apiUrl })) {
+  if (cfgIn.watchdog) throw new Error("watchdog mode: call watchdog(), not run()");
   const warnings = [];
   const ownerType = await resolveOwnerType(gh, cfgIn.owner, cfgIn.ownerType);
   let cfg = cfgIn;
@@ -8001,7 +8127,7 @@ async function run(cfgIn, now = /* @__PURE__ */ new Date(), gh = new GitHubClien
       warnings.push(`refusal check failed: ${e.message}`);
       return [];
     });
-    log.info(r.length ? r.map((x) => `${x.repo}#${x.runId} ${x.jobName}: ${x.reason}`).join("\n") : "none");
+    log.info(r.length ? r.map((x) => `${x.repo}#${x.runId} ${x.jobName} [${x.evidence}]: ${x.reason}`).join("\n") : "none");
     return r;
   }) : [];
   const [previousRaw, force] = await Promise.all([
@@ -8017,15 +8143,38 @@ async function run(cfgIn, now = /* @__PURE__ */ new Date(), gh = new GitHubClien
     return r;
   });
   for (const f of results.filter((x) => x.action === "failed")) warnings.push(`${f.repo}: ${f.error}`);
-  if (!cfg.dryRun && (decision.changed || previous?.cycle !== usage.cycle)) {
-    const state = { mode: decision.mode, cycle: usage.cycle, since: decision.changed ? now.toISOString() : previous?.since ?? now.toISOString(), reason: decision.reason };
-    await putVariable(gh, cfg.owner, cfg.stateRepo, cfg.stateVariable, JSON.stringify(state), previousRaw !== void 0).catch((e) => warnings.push(`could not save state to ${cfg.stateRepo}/${cfg.stateVariable}: ${e.message}`));
-  }
   const reruns = [];
-  if (decision.mode === "self-hosted" && cfg.rerunRefused && refusals.length && !cfg.dryRun) {
-    for (const r of dedupe(refusals)) {
+  if (decision.mode === "self-hosted" && cfg.rerunRefused && decision.refusals.length && !cfg.dryRun) {
+    const done = new Set(previous?.reran ?? []);
+    const todo = dedupe(decision.refusals).filter((r) => !done.has(r.runId));
+    let attempts = 0;
+    for (const r of todo) {
+      if (attempts >= cfg.maxReruns) {
+        warnings.push(`re-run cap reached (max-reruns: ${cfg.maxReruns}); ${todo.length - attempts} refused run(s) left for the next run`);
+        break;
+      }
+      attempts++;
       await gh.request("POST", `/repos/${cfg.owner}/${r.repo}/actions/runs/${r.runId}/rerun-failed-jobs`).then(() => reruns.push(r.runId)).catch((e) => warnings.push(`rerun ${r.repo}#${r.runId} failed: ${e.message}`));
     }
+  }
+  let tokenWarnedOn;
+  const expiry = tokenExpiryWarning(gh.tokenExpiresAt, now, cfg.tokenExpiryWarnDays);
+  if (expiry) {
+    warnings.push(expiry.text);
+    const today = now.toISOString().slice(0, 10);
+    if (cfg.notify.length && !cfg.dryRun && previous?.tokenWarnedOn !== today) {
+      const errs = await notifyAlert(cfg.notify, {
+        kind: "token_expiring",
+        text: `${expiry.text}. When it expires, ${cfg.variable} stops being managed.`,
+        data: { owner: cfg.owner, daysLeft: expiry.daysLeft, expiresOn: expiry.date }
+      });
+      warnings.push(...errs);
+      if (errs.length < cfg.notify.length) tokenWarnedOn = today;
+    }
+  }
+  if (!cfg.dryRun) {
+    const state = nextState({ previous, decision, cycle: usage.cycle, now, reran: reruns, tokenWarnedOn });
+    await putVariable(gh, cfg.owner, cfg.stateRepo, cfg.stateVariable, JSON.stringify(state), previousRaw !== void 0).catch((e) => warnings.push(`could not save state to ${cfg.stateRepo}/${cfg.stateVariable}: ${e.message}`));
   }
   if (decision.changed && cfg.notify.length) {
     const errs = await notify(cfg.notify, { mode: decision.mode, previous: previous?.mode, reason: decision.reason, owner: cfg.owner, repos, percentUsed: decision.percentUsed, dryRun: cfg.dryRun });
@@ -8033,6 +8182,43 @@ async function run(cfgIn, now = /* @__PURE__ */ new Date(), gh = new GitHubClien
   }
   for (const w of warnings) log.warn(w);
   return { decision, usage, refusals, repos: results, reruns, warnings, includedMinutes: cfg.includedMinutes };
+}
+async function watchdog(cfg, now = /* @__PURE__ */ new Date(), gh = new GitHubClient({ token: cfg.token, apiUrl: cfg.apiUrl })) {
+  const warnings = [];
+  const where = `${cfg.owner}/${cfg.stateRepo} variable ${cfg.stateVariable}`;
+  const state = parseState(await getVariable(gh, cfg.owner, cfg.stateRepo, cfg.stateVariable));
+  const last = state?.lastChecked ? new Date(state.lastChecked) : void 0;
+  const minutesSince = last ? Math.max(0, Math.floor((now.getTime() - last.getTime()) / 6e4)) : void 0;
+  const expiry = tokenExpiryWarning(gh.tokenExpiresAt, now, cfg.tokenExpiryWarnDays);
+  if (expiry) warnings.push(expiry.text);
+  let result;
+  if (state && minutesSince !== void 0 && minutesSince <= cfg.staleAfterMinutes) {
+    result = { ok: true, message: `OK: Overtime last ran ${minutesSince} minute(s) ago (${state.lastChecked}); ${cfg.variable} is ${state.mode}`, state, minutesSince, warnings };
+    log.info(result.message);
+  } else {
+    const message = !state ? `Overtime has no state in ${where}; it may never have run, and ${cfg.variable} is not being managed` : minutesSince === void 0 ? `Overtime hasn't recorded when it last ran (state in ${where} has no lastChecked); ${cfg.variable} is frozen at ${state.mode}` : `Overtime hasn't run for ${minutesSince} minutes; ${cfg.variable} is frozen at ${state.mode}`;
+    log.error(message);
+    if (cfg.notify.length) {
+      warnings.push(...await notifyAlert(cfg.notify, {
+        kind: "stale",
+        text: message,
+        data: { owner: cfg.owner, stateRepo: cfg.stateRepo, mode: state?.mode ?? null, lastChecked: state?.lastChecked ?? null, minutesSince: minutesSince ?? null, staleAfterMinutes: cfg.staleAfterMinutes }
+      }));
+    }
+    result = { ok: false, message, ...state ? { state } : {}, ...minutesSince !== void 0 ? { minutesSince } : {}, warnings };
+  }
+  for (const w of warnings) log.warn(w);
+  return result;
+}
+function watchdogSummaryMarkdown(r) {
+  return [
+    `## \u23F1\uFE0F Overtime watchdog: ${r.ok ? "\u2705 running" : "\u274C stale"}`,
+    "",
+    r.message,
+    r.warnings.length ? `
+**Warnings:**
+${r.warnings.map((w) => `- ${w}`).join("\n")}` : ""
+  ].join("\n");
 }
 function dedupe(rs) {
   const seen = /* @__PURE__ */ new Set();
@@ -8081,6 +8267,11 @@ function parseDuration(s) {
 var HELP = `overtime: route GitHub Actions to self-hosted runners when included minutes run out
 
 Usage: overtime [--once] [--interval 10m] [--config overtime.yml] [--dry-run]
+       overtime --watchdog [--config overtime.yml]
+
+--watchdog checks that Overtime's state was refreshed within stale-after-minutes (default 60)
+and exits 1 (after notifying) when it wasn't. It runs once, reads only the state variable
+and writes nothing: run it from cron somewhere other than where Overtime runs.
 
 Settings come from OVERTIME_* environment variables (OVERTIME_TOKEN, OVERTIME_OWNER,
 OVERTIME_REPOS, OVERTIME_SWITCH_AT_PERCENT, ...) and/or a YAML config file.
@@ -8097,7 +8288,14 @@ async function main(argv) {
   const raw = fromEnv();
   if (arg("--config")) raw["config-file"] = arg("--config");
   if (argv.includes("--dry-run")) raw["dry-run"] = "true";
+  if (argv.includes("--watchdog")) raw["watchdog"] = "true";
   const cfg = buildConfig(raw, { repository: process.env.GITHUB_REPOSITORY });
+  if (cfg.watchdog) {
+    const w = await watchdog(cfg);
+    console.log(watchdogSummaryMarkdown(w));
+    if (!w.ok) process.exitCode = 1;
+    return;
+  }
   const once = argv.includes("--once") || process.env.OVERTIME_ONCE === "true";
   const interval = parseDuration(arg("--interval") ?? process.env.OVERTIME_INTERVAL ?? "10m");
   let stopping = false;
