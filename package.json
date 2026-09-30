@@ -1,6 +1,6 @@
 {
   "name": "overtime",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "When GitHub's free Actions minutes run out, your runners clock in. Billing-aware runs-on routing.",
   "license": "MIT",

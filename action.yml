@@ -1,4 +1,4 @@
-name: "Overtime"
+name: "Overtime Runner Router"
 description: "Use GitHub-hosted runners while free Actions minutes last, then switch repos to your self-hosted runners automatically."
 author: "Shawn Azar"
 branding:
