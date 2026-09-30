@@ -7,6 +7,7 @@ import { resolveOwnerType, resolveRepos } from "./repos.js";
 import { applyMode, getVariable, putVariable, type RepoResult } from "./apply.js";
 import { notify } from "./notify.js";
 import { log } from "./log.js";
+import { includedMinutesFor } from "./plan.js";
 
 export interface RunResult {
   decision: Decision;
@@ -15,11 +16,18 @@ export interface RunResult {
   repos: RepoResult[];
   reruns: number[];
   warnings: string[];
+  includedMinutes: number;
 }
 
-export async function run(cfg: Config, now = new Date(), gh = new GitHubClient({ token: cfg.token, apiUrl: cfg.apiUrl })): Promise<RunResult> {
+export async function run(cfgIn: Config, now = new Date(), gh = new GitHubClient({ token: cfgIn.token, apiUrl: cfgIn.apiUrl })): Promise<RunResult> {
   const warnings: string[] = [];
-  const ownerType = await resolveOwnerType(gh, cfg.owner, cfg.ownerType);
+  const ownerType = await resolveOwnerType(gh, cfgIn.owner, cfgIn.ownerType);
+  let cfg = cfgIn;
+  if (cfgIn.includedMinutesAuto) {
+    const { minutes, plan } = await includedMinutesFor(gh, cfgIn.owner, ownerType);
+    cfg = { ...cfgIn, includedMinutes: minutes };
+    log.info(`plan "${plan}": ${minutes} included minutes/month`);
+  }
   const repos = await log.group("Repositories", async () => {
     const r = await resolveRepos(gh, cfg, ownerType);
     log.info(`${r.length} managed repo(s): ${r.join(", ") || "(none)"}`);
@@ -36,7 +44,7 @@ export async function run(cfg: Config, now = new Date(), gh = new GitHubClient({
   const refusals = cfg.detectRefusals
     ? await log.group("Refused jobs", async () => {
         const since = new Date(now.getTime() - cfg.refusalLookbackMinutes * 60_000);
-        const r = await findRefusals(gh, cfg.owner, repos, since).catch((e) => { warnings.push(`refusal check failed: ${(e as Error).message}`); return []; });
+        const r = await findRefusals(gh, cfg.owner, repos, since, cfg.refusalEvidence).catch((e) => { warnings.push(`refusal check failed: ${(e as Error).message}`); return []; });
         log.info(r.length ? r.map((x) => `${x.repo}#${x.runId} ${x.jobName}: ${x.reason}`).join("\n") : "none");
         return r;
       })
@@ -78,7 +86,7 @@ export async function run(cfg: Config, now = new Date(), gh = new GitHubClient({
     warnings.push(...errs);
   }
   for (const w of warnings) log.warn(w);
-  return { decision, usage, refusals, repos: results, reruns, warnings };
+  return { decision, usage, refusals, repos: results, reruns, warnings, includedMinutes: cfg.includedMinutes };
 }
 
 function dedupe(rs: Refusal[]): Refusal[] {
@@ -87,6 +95,7 @@ function dedupe(rs: Refusal[]): Refusal[] {
 }
 
 export function summaryMarkdown(r: RunResult, cfg: Config): string {
+  const included = r.includedMinutes ?? cfg.includedMinutes;
   const icon = (m: Mode) => (m === "hosted" ? "☁️ GitHub-hosted" : "🏠 self-hosted");
   const rows = r.repos.map((x) => `| ${x.repo} | \`${x.variable}\` | \`${x.value}\` | ${x.action}${x.error ? `: ${x.error}` : ""} |`).join("\n");
   return [
@@ -96,7 +105,7 @@ export function summaryMarkdown(r: RunResult, cfg: Config): string {
     "",
     `| Cycle | Used | From allowance | Allowance | Billed |`,
     `|---|---|---|---|---|`,
-    `| ${r.usage.cycle} | ${r.usage.grossMinutes} min | ${r.usage.includedUsed} min (${r.decision.percentUsed}%) | ${cfg.includedMinutes} min | ${r.usage.billedMinutes} min / $${r.usage.billedAmount} |`,
+    `| ${r.usage.cycle} | ${r.usage.grossMinutes} min | ${r.usage.includedUsed} min (${r.decision.percentUsed}%) | ${included} min | ${r.usage.billedMinutes} min / $${r.usage.billedAmount} |`,
     "",
     `| Repository | Variable | Value | Result |`,
     `|---|---|---|---|`,

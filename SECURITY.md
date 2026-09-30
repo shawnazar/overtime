@@ -54,12 +54,11 @@ in this codebase.
   "All repositories" unless you really do manage all of them.
 - **Repository permissions** (the minimum):
   - **Variables:** Read and write (reads and sets the `runs-on` variable)
-  - **Checks:** Read (reads the annotation explaining why GitHub refused a job; only needed for `detect-refusals`)
   - **Actions:** Read and write (reads failed runs to detect refusals; write is
     only for re-running refused jobs, so Read is enough if `rerun-refused: false`)
   - **Metadata:** Read (granted automatically)
   - **Administration: not needed.** Do not grant it.
-- **Account permissions:** **Plan:** Read (billing usage for a personal account).
+- **Account permissions:** **Plan:** Read (billing usage and included minutes for a personal account).
   For an organization, billing usage instead needs the organization permission
   **Administration:** Read.
 - **Expiration:** set one, and rotate before it lapses.

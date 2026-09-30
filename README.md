@@ -54,8 +54,7 @@ A **fine-grained personal access token** (Settings → Developer settings → Fi
 | Repository access | Only the repos Overtime manages, plus the repo running it | least privilege |
 | Repository → Variables | Read and write | set `CI_RUNS_ON`, keep state |
 | Repository → Actions | Read and write | find refused jobs, re-run them (read-only works if `rerun-refused: false`) |
-| Repository → Checks | Read | read the annotation that says *why* GitHub refused a job (only for `detect-refusals`) |
-| Account → Plan | Read | read your Actions billing usage |
+| Account → Plan | Read | read your Actions billing usage and your plan's included minutes |
 
 For an **organization**, grant the org's **Administration: Read** (billing usage) instead of Plan. Save the token as
 a secret, e.g. `OVERTIME_TOKEN`.
@@ -80,7 +79,6 @@ jobs:
           repos: |
             my-app
             my-site
-          included-minutes: 2000
           self-hosted-runs-on: '["self-hosted", "linux"]'
           notify: ${{ secrets.OVERTIME_DISCORD_WEBHOOK }}
 ```
@@ -122,13 +120,14 @@ Every setting is an action input, an `OVERTIME_*` environment variable (containe
 | `variable` | `CI_RUNS_ON` | Variable written to each repo |
 | `hosted-runs-on` | `ubuntu-latest` | Label or JSON (`["ubuntu-latest"]`, `{"group":"x","labels":[...]}`) |
 | `self-hosted-runs-on` | `["self-hosted"]` | Label or JSON |
-| `included-minutes` | `2000` | Your plan's monthly allowance |
+| `included-minutes` | `auto` | Your plan's monthly allowance; `auto` reads the plan (Free 2,000, Pro/Team 3,000) |
 | `switch-at-percent` | `90` | Switch when this much of the allowance is used. Leave headroom for queued jobs |
 | `switch-back` | `next-cycle` | `next-cycle`, or `below-percent` (e.g. after raising the allowance) |
 | `switch-back-percent` | `50` | Used with `below-percent`; must be below `switch-at-percent` |
 | `skus` | all Actions minutes | Only count SKUs containing these strings (e.g. `linux`) |
 | `switch-on-overage` | `true` | Any billed minutes this cycle ⇒ self-hosted |
 | `detect-refusals` | `true` | Jobs GitHub won't start for billing reasons ⇒ self-hosted |
+| `refusal-evidence` | `auto` | How to recognise a billing refusal: `annotations` (GitHub's message; needs a classic PAT or App), `heuristic` (hosted job failed with no runner and no steps), or `auto` (annotations when readable, else heuristic) |
 | `refusal-lookback-minutes` | `120` | Window for refusal detection |
 | `rerun-refused` | `true` | Re-run refused jobs after switching |
 | `mode` | `auto` | `hosted` / `self-hosted` pins everything |
@@ -188,6 +187,11 @@ including a hosted Overtime job, so it could never switch you over. Or use the c
 **Does GitHub charge for self-hosted runners?** Not today. GitHub
 [announced a per-minute platform fee and postponed it](https://github.blog/changelog/2025-12-16-coming-soon-simpler-pricing-and-a-better-experience-for-github-actions/);
 the current docs say self-hosted usage is free. Overtime doesn't assume either way: it only reads what you're billed.
+
+**Why a heuristic for refused jobs?** Fine-grained tokens can't read check-run annotations (GitHub returns
+403), so Overtime can't see GitHub's "spending limit" message with them. A GitHub-hosted job that failed without
+ever getting a runner or running a step is what a billing refusal looks like; `refusal-evidence: annotations`
+opts out of the heuristic.
 
 **macOS/Windows minutes count double/10x.** GitHub reports minute quantities as billed; Overtime uses those, and
 `skus` lets you count only the runner types you care about.

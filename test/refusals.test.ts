@@ -2,9 +2,9 @@ import { describe, it, expect } from "vitest";
 import { neverStarted, findRefusals } from "../src/refusals.js";
 import { client } from "./helpers.js";
 
-const job = (id: number, over: Partial<{ name: string; conclusion: string | null; runner_name: string | null; steps: unknown[] }> = {}) => ({
+const job = (id: number, over: Partial<{ name: string; conclusion: string | null; runner_name: string | null; steps: unknown[]; labels: string[] }> = {}) => ({
   id, name: over.name ?? `job-${id}`, conclusion: over.conclusion === undefined ? "failure" : over.conclusion,
-  runner_name: over.runner_name ?? null, steps: over.steps ?? [],
+  runner_name: over.runner_name ?? null, steps: over.steps ?? [], labels: over.labels ?? [],
 });
 
 describe("neverStarted", () => {
@@ -81,5 +81,47 @@ describe("findRefusals", () => {
   it("returns [] when there are no failed runs", async () => {
     const { gh } = client(() => ({ body: { workflow_runs: [] } }));
     expect(await findRefusals(gh, "me", ["a"], new Date())).toEqual([]);
+  });
+});
+
+describe("findRefusals with a fine-grained PAT (annotations 403)", () => {
+  const route = (c: { path: string }) => {
+    switch (c.path) {
+      case "/repos/me/a/actions/runs":
+        return { body: { workflow_runs: [{ id: 200 }] } };
+      case "/repos/me/a/actions/runs/200/jobs":
+        return {
+          body: {
+            jobs: [
+              job(10, { name: "hosted-refused", labels: ["ubuntu-latest"] }),
+              job(11, { name: "self-hosted-never-started", labels: ["self-hosted", "linux"] }),
+              job(12, { name: "hosted-ran", labels: ["ubuntu-24.04"], runner_name: "GitHub Actions 2", steps: [{}] }),
+            ],
+          },
+        };
+      default:
+        if (/\/check-runs\/\d+\/annotations$/.test(c.path)) {
+          return { status: 403, body: { message: "Resource not accessible by personal access token" } };
+        }
+        return undefined;
+    }
+  };
+
+  it("auto falls back to the hosted-label heuristic when annotations are forbidden", async () => {
+    const { gh } = client(route);
+    const r = await findRefusals(gh, "me", ["a"], new Date(), "auto");
+    expect(r.map((x) => x.jobName)).toEqual(["hosted-refused"]);
+    expect(r[0]!.reason).toMatch(/ubuntu-latest/);
+  });
+
+  it("heuristic never calls the annotations endpoint", async () => {
+    const { gh, calls } = client(route);
+    await findRefusals(gh, "me", ["a"], new Date(), "heuristic");
+    expect(calls.some((c) => /annotations/.test(c.path))).toBe(false);
+  });
+
+  it("annotations-only surfaces the 403 instead of guessing", async () => {
+    const { gh } = client(route);
+    await expect(findRefusals(gh, "me", ["a"], new Date(), "annotations")).rejects.toThrow(/403/);
   });
 });

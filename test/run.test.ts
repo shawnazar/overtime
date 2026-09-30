@@ -279,7 +279,7 @@ describe("summaryMarkdown", () => {
     const md = summaryMarkdown({
       decision: { mode: "hosted", reason: "5% used", percentUsed: 5, changed: false },
       usage: { grossMinutes: 100, includedUsed: 100, billedMinutes: 0, billedAmount: 0, cycle: "2026-09", source: "summary" },
-      refusals: [], repos: [], reruns: [], warnings: ["no repositories matched the selection"],
+      refusals: [], repos: [], reruns: [], warnings: ["no repositories matched the selection"], includedMinutes: 2000,
     }, cfg);
     expect(md).toContain("## ⏱️ Overtime: ☁️ GitHub-hosted (dry run)");
     expect(md).toContain("| (none) | | | |");

@@ -4,7 +4,7 @@ import type { Usage } from "../src/usage.js";
 import type { Refusal } from "../src/refusals.js";
 import { DEFAULTS } from "../src/config.js";
 
-const cfg = (over: Partial<typeof DEFAULTS> = {}) => ({ ...DEFAULTS, ...over });
+const cfg = (over: Partial<typeof DEFAULTS> = {}) => ({ ...DEFAULTS, includedMinutes: 2000, includedMinutesAuto: false, ...over });
 const usage = (includedUsed: number, over: Partial<Usage> = {}): Usage => ({
   grossMinutes: includedUsed, includedUsed, billedMinutes: 0, billedAmount: 0, cycle: "2026-09", source: "summary", ...over,
 });

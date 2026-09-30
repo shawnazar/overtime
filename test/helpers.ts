@@ -55,5 +55,5 @@ export function fixture<T = any>(name: string): T {
 }
 
 export function config(over: Partial<Config> = {}): Config {
-  return { ...DEFAULTS, token: "test-token", owner: "me", stateRepo: "a", repos: ["a", "b"], ...over };
+  return { ...DEFAULTS, includedMinutes: 2000, includedMinutesAuto: false, token: "test-token", owner: "me", stateRepo: "a", repos: ["a", "b"], ...over };
 }
