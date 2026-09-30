@@ -110,3 +110,38 @@ describe("fetchUsage", () => {
     expect(err.status).toBe(422);
   });
 });
+
+describe("standard-runner SKUs only by default (#8)", () => {
+  const items = [
+    { product: "actions", sku: "actions_linux", unitType: "minutes", grossQuantity: 100, discountQuantity: 100, netQuantity: 0, netAmount: 0 },
+    { product: "actions", sku: "actions_linux_4_core", unitType: "minutes", grossQuantity: 10, discountQuantity: 0, netQuantity: 10, netAmount: 0.16 },
+    { product: "actions", sku: "actions_windows_8_core", unitType: "minutes", grossQuantity: 5, discountQuantity: 0, netQuantity: 5, netAmount: 0.3 },
+    { product: "actions", sku: "Actions Linux GPU", unitType: "minutes", grossQuantity: 2, discountQuantity: 0, netQuantity: 2, netAmount: 0.14 },
+  ];
+
+  it("ignores larger runners so they can't trip the overage rule on day 1", async () => {
+    const { summarize } = await import("../src/usage.js");
+    const u = summarize(items, [], "2026-10", "summary");
+    expect(u).toMatchObject({ grossMinutes: 100, includedUsed: 100, billedMinutes: 0 });
+  });
+
+  it("the #8 repro decides hosted", async () => {
+    const { summarize } = await import("../src/usage.js");
+    const { decide } = await import("../src/decide.js");
+    const { DEFAULTS } = await import("../src/config.js");
+    const usage = summarize(items.slice(0, 2), [], "2026-10", "summary");
+    const d = decide({ cfg: { ...DEFAULTS, includedMinutes: 2000 }, usage, refusals: [] });
+    expect(d.mode).toBe("hosted");
+  });
+
+  it("skus: all counts every Actions minutes SKU", async () => {
+    const { summarize } = await import("../src/usage.js");
+    expect(summarize(items, ["all"], "2026-10", "summary").billedMinutes).toBe(17);
+  });
+
+  it("treats standard Linux arm64, Windows and macOS as standard", async () => {
+    const { isStandardSku } = await import("../src/usage.js");
+    for (const s of ["actions_linux", "actions_linux_arm", "Actions Linux ARM64", "actions_windows", "actions_macos"]) expect(isStandardSku(s)).toBe(true);
+    for (const s of ["actions_linux_4_core", "actions_macos_12_core", "actions_linux_arm_4_core", "actions_linux_gpu", "actions_storage"]) expect(isStandardSku(s)).toBe(false);
+  });
+});

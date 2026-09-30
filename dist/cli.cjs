@@ -7707,12 +7707,20 @@ function nextLink(link) {
 function cycleOf(d) {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
+var STANDARD_SKU = /^actions_(linux|windows|macos)(_arm(64)?)?$|^actions_macos_3_core$/;
+function normalizeSku(sku) {
+  return (sku ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+function isStandardSku(sku) {
+  return STANDARD_SKU.test(normalizeSku(sku));
+}
 function isActionsMinutes(item, skus) {
   if (!/^actions$/i.test(item.product ?? "")) return false;
   if (item.unitType && !/minute/i.test(item.unitType)) return false;
-  if (!skus.length) return true;
-  const sku = (item.sku ?? "").toLowerCase();
-  return skus.some((s) => sku.includes(s.toLowerCase()));
+  if (!skus.length) return !item.sku || isStandardSku(item.sku);
+  if (skus.some((s) => s.trim().toLowerCase() === "all")) return true;
+  const sku = normalizeSku(item.sku);
+  return skus.some((s) => sku.includes(normalizeSku(s)));
 }
 function summarize(items, skus, cycle, source) {
   const u = { grossMinutes: 0, includedUsed: 0, billedMinutes: 0, billedAmount: 0, cycle, source };
