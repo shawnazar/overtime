@@ -1,0 +1,13 @@
+# overtime.yml
+includedMinutes: 3000
+switchAtPercent: 85
+reposInclude: ["*"]
+reposExclude: ["paid-project", "*-archive"]
+selfHosted: ["self-hosted", "linux", "x64"]
+overrides:
+  big-monorepo:
+    selfHosted: ["self-hosted", "linux", "16gb"]   # a beefier runner
+  docs:
+    mode: hosted          # always GitHub-hosted (e.g. it's public)
+  legacy-app:
+    variable: LEGACY_RUNS_ON

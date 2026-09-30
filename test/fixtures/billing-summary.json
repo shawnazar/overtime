@@ -1,0 +1,10 @@
+{
+  "timePeriod": { "year": 2026, "month": 9 },
+  "user": "me",
+  "usageItems": [
+    { "product": "Actions", "sku": "Actions Linux", "unitType": "Minutes", "pricePerUnit": 0.008, "grossQuantity": 1500, "grossAmount": 12, "discountQuantity": 1500, "discountAmount": 12, "netQuantity": 0, "netAmount": 0 },
+    { "product": "Actions", "sku": "Actions macOS 3-core", "unitType": "Minutes", "pricePerUnit": 0.08, "grossQuantity": 300, "grossAmount": 24, "discountQuantity": 200, "discountAmount": 16, "netQuantity": 100, "netAmount": 8 },
+    { "product": "Actions", "sku": "Actions Storage", "unitType": "GigabyteHours", "pricePerUnit": 0.00034, "grossQuantity": 5000, "grossAmount": 1.7, "discountQuantity": 5000, "discountAmount": 1.7, "netQuantity": 0, "netAmount": 0 },
+    { "product": "Packages", "sku": "Packages data transfer", "unitType": "Minutes", "grossQuantity": 999, "discountQuantity": 999, "netQuantity": 0, "netAmount": 0 }
+  ]
+}

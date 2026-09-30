@@ -1,0 +1,54 @@
+name: Bug report
+description: Overtime did something wrong or unexpected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Security problems go through private reporting, not issues** (see SECURITY.md).
+        Never paste a token. Redact repository names or billing figures if they're sensitive.
+  - type: input
+    id: version
+    attributes:
+      label: Overtime version
+      description: Tag or SHA from your `uses:` line, or the container image tag.
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: How are you running it?
+      options:
+        - GitHub Action
+        - Container / CLI
+    validations:
+      required: true
+  - type: dropdown
+    id: owner-type
+    attributes:
+      label: Account type
+      options:
+        - Personal account
+        - Organization
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected, and what Overtime did instead.
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: Your workflow step or config file, with the token and any secrets removed.
+      render: yaml
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / step summary
+      description: Relevant output from the run (with secrets removed).
+      render: text

@@ -1,0 +1,27 @@
+name: Feature request
+description: Suggest an improvement or new capability.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that Overtime doesn't support today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How you'd like it to work (inputs, behaviour, output).
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: permissions
+    attributes:
+      label: Token permission impact
+      description: Would this need the token to have any additional permission? Overtime aims to stay least-privilege.

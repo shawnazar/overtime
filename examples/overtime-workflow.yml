@@ -1,0 +1,20 @@
+# .github/workflows/overtime.yml (in any repo that has a self-hosted runner)
+name: Overtime
+on:
+  schedule: [{ cron: "*/10 * * * *" }]
+  workflow_dispatch:
+permissions: {}
+jobs:
+  route:
+    runs-on: [self-hosted]   # must not need hosted minutes, or it stops when they run out
+    timeout-minutes: 5
+    steps:
+      - uses: shawnazar/overtime@v0
+        with:
+          token: ${{ secrets.OVERTIME_TOKEN }}
+          repos: |
+            my-app
+            my-site
+          included-minutes: 2000
+          self-hosted-runs-on: '["self-hosted", "linux"]'
+          notify: ${{ secrets.OVERTIME_DISCORD_WEBHOOK }}

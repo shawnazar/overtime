@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Typecheck, test, build
+    # GitHub-hosted only. This repo is public and runs untrusted pull requests;
+    # never route its own CI to self-hosted runners.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      # --ignore-scripts: no dependency lifecycle scripts run in CI.
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      # Actions run the committed dist/, not src/. A PR that changes src/ without
+      # rebuilding would ship code nobody reviewed in its compiled form.
+      - name: Verify dist/ is up to date
+        run: |
+          if [ -n "$(git status --porcelain -- dist/)" ]; then
+            echo "::error::dist/ is stale. Run 'npm run build' and commit the result."
+            git status --porcelain -- dist/
+            git diff --stat -- dist/
+            exit 1
+          fi

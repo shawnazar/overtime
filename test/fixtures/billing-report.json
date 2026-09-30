@@ -1,0 +1,9 @@
+{
+  "usageItems": [
+    { "date": "2026-09-01T00:00:00Z", "product": "actions", "sku": "Actions Linux", "quantity": 1000, "unitType": "minutes", "pricePerUnit": 0.008, "grossAmount": 8, "discountAmount": 8, "netAmount": 0, "repositoryName": "me/a" },
+    { "date": "2026-09-02T00:00:00Z", "product": "actions", "sku": "Actions Linux", "quantity": 500, "unitType": "minutes", "pricePerUnit": 0.008, "grossAmount": 4, "discountAmount": 2, "netAmount": 2, "repositoryName": "me/a" },
+    { "date": "2026-09-03T00:00:00Z", "product": "actions", "sku": "Actions Windows", "quantity": 100.333, "unitType": "minutes", "pricePerUnit": 0.016, "grossAmount": 1.6, "discountAmount": 0, "netAmount": 1.6, "repositoryName": "me/b" },
+    { "date": "2026-09-03T00:00:00Z", "product": "actions", "sku": "Actions Storage", "quantity": 42, "unitType": "GigabyteHours", "pricePerUnit": 0.00034, "grossAmount": 0.01, "discountAmount": 0, "netAmount": 0.01, "repositoryName": "me/b" },
+    { "date": "2026-09-03T00:00:00Z", "product": "git_lfs", "sku": "LFS bandwidth", "quantity": 7, "unitType": "GigabyteHours", "grossAmount": 0.1, "discountAmount": 0, "netAmount": 0.1, "repositoryName": "me/b" }
+  ]
+}

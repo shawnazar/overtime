@@ -1,0 +1,119 @@
+name: "Overtime: free minutes first, self-hosted when they run out"
+description: "Routes runs-on per repo: GitHub-hosted while included Actions minutes last, your self-hosted runners after. Billing-aware, no Kubernetes."
+author: "Shawn Azar"
+branding:
+  icon: "clock"
+  color: "orange"
+
+inputs:
+  token:
+    description: "Fine-grained PAT: repo Variables read/write, Actions read/write and Checks read (refusal detection/re-runs) on the managed repos, and account Plan: read (or org Administration: read) for billing usage. Store as a secret."
+    required: true
+  api-url:
+    description: "GitHub API URL (GitHub Enterprise Server). Default: https://api.github.com."
+    required: false
+  owner:
+    description: "User or organization that owns the repos and the Actions bill. Default: owner of the repo running this action."
+    required: false
+  owner-type:
+    description: "auto | user | organization Default: auto."
+    required: false
+  repos:
+    description: "Repos to manage (names, comma- or newline-separated). Combine with repos-include/repos-topic for discovery."
+    required: false
+  repos-include:
+    description: "Glob patterns (e.g. 'app-*') matched against all repos the token can see under owner."
+    required: false
+  repos-exclude:
+    description: "Glob patterns to skip (applies to repos and discovery). Handy for a repo you pay for, e.g. 'forkmate'."
+    required: false
+  repos-topic:
+    description: "Only repos with this topic (discovery)."
+    required: false
+  include-archived:
+    description: "Include archived repos in discovery. Default: false."
+    required: false
+  include-forks:
+    description: "Include forks in discovery. Default: false."
+    required: false
+  # No `default:` values on purpose: GitHub passes declared defaults as if set, which would
+  # override config-file values. Defaults live in src/config.ts and are stated here in text.
+  variable:
+    description: "Repository variable to set. Workflows use: runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '\"ubuntu-latest\"') }} Default: CI_RUNS_ON."
+    required: false
+  hosted-runs-on:
+    description: "runs-on while minutes last: a label or JSON (array or {\"group\":...,\"labels\":[...]}). Default: ubuntu-latest."
+    required: false
+  self-hosted-runs-on:
+    description: "runs-on once minutes are spent: a label or JSON. Default: [\"self-hosted\"]."
+    required: false
+  included-minutes:
+    description: "Monthly included minutes of your plan (Free 2000, Pro 3000, Team 3000). Used for the percentage threshold. Default: 2000."
+    required: false
+  switch-at-percent:
+    description: "Switch to self-hosted when this share of the included minutes is used. Leave headroom: jobs already queued still bill. Default: 90."
+    required: false
+  switch-back:
+    description: "next-cycle (stay self-hosted until the 1st) | below-percent (return when usage < switch-back-percent, e.g. after raising the allowance) Default: next-cycle."
+    required: false
+  switch-back-percent:
+    description: "Used with switch-back: below-percent. Default: 50."
+    required: false
+  skus:
+    description: "Only count SKUs containing these substrings (e.g. 'linux'). Default: every Actions minutes SKU."
+    required: false
+  switch-on-overage:
+    description: "Switch as soon as any Actions minutes are billed this cycle. Default: true."
+    required: false
+  detect-refusals:
+    description: "Switch when GitHub refuses to start hosted jobs for billing reasons (spending limit, failed payment). Default: true."
+    required: false
+  refusal-lookback-minutes:
+    description: "How far back to look for refused jobs. Default: 120."
+    required: false
+  rerun-refused:
+    description: "After switching to self-hosted, re-run the refused jobs. Default: true."
+    required: false
+  mode:
+    description: "auto | hosted | self-hosted. Pins every managed repo; use for maintenance. Default: auto."
+    required: false
+  force-variable:
+    description: "Variable in state-repo that overrides mode without editing the workflow (set to hosted/self-hosted; delete to return to auto). Default: OVERTIME_FORCE."
+    required: false
+  state-repo:
+    description: "Repo that stores Overtime's state variable. Default: the repo running this action."
+    required: false
+  state-variable:
+    description: "Variable holding the last decision (JSON), used for hysteresis and change notifications. Default: OVERTIME_STATE."
+    required: false
+  notify:
+    description: "Webhooks for mode changes: 'discord:https://…', 'slack:https://…', 'generic:https://…' or bare URLs. Pass from a secret."
+    required: false
+  dry-run:
+    description: "Decide and report, change nothing. Default: false."
+    required: false
+  config-file:
+    description: "YAML file with any of the settings above in camelCase, plus per-repo `overrides` (see README). Inputs win over the file."
+    required: false
+
+outputs:
+  mode:
+    description: "hosted | self-hosted"
+  changed:
+    description: "true when the mode changed on this run"
+  reason:
+    description: "Human-readable reason for the decision"
+  percent-used:
+    description: "Share of included minutes used this cycle"
+  minutes-used:
+    description: "Actions minutes used this cycle (as GitHub reports them)"
+  minutes-billed:
+    description: "Actions minutes billed beyond the allowance this cycle"
+  repos:
+    description: "JSON array of managed repos"
+  runs-on:
+    description: "JSON runs-on value written to the first managed repo"
+
+runs:
+  using: "node24"
+  main: "dist/index.cjs"
