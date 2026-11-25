@@ -1,6 +1,6 @@
 # Overtime as a long-running container (cron-like loop) for people who prefer not to run it
 # as a GitHub Action. dist/cli.cjs is a single bundled file with no runtime dependencies.
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
+FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5
 
 LABEL org.opencontainers.image.title="overtime" \
       org.opencontainers.image.description="Billing-aware runs-on routing: GitHub-hosted until included minutes run out, then self-hosted" \
